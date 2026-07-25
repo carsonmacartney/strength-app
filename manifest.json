@@ -1,0 +1,19 @@
+{
+  "name": "Strength Log",
+  "short_name": "Strength Log",
+  "description": "Track exercises, sessions, and progress over time.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#121317",
+  "theme_color": "#121317",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
