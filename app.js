@@ -923,6 +923,15 @@
     });
     card.appendChild(btn);
     wrap.appendChild(card);
+
+    const logoWrap = el("div", "settings-logo-wrap");
+    const logo = document.createElement("img");
+    logo.className = "settings-logo";
+    logo.src = "icons/logo-shftrs.png";
+    logo.alt = "Tin Shifters";
+    logoWrap.appendChild(logo);
+    wrap.appendChild(logoWrap);
+
     return wrap;
   }
 

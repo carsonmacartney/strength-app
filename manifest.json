@@ -1,6 +1,6 @@
 {
-  "name": "Strength Log",
-  "short_name": "Strength Log",
+  "name": "SHFTRS",
+  "short_name": "SHFTRS",
   "description": "Split-based strength training tracker with week progression, volume, and adherence.",
   "start_url": "./index.html",
   "scope": "./",

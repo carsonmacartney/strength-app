@@ -910,6 +910,19 @@ button, input, textarea { font-family: inherit; }
   color: var(--text-faint);
 }
 
+/* Settings footer logo */
+.settings-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+.settings-logo {
+  width: 100%;
+  max-width: 200px;
+  height: auto;
+  opacity: 0.92;
+}
+
 /* Toast */
 .toast {
   position: fixed;
