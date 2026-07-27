@@ -5,6 +5,7 @@
 
   const PROGRAM_STORAGE_KEY = "bigLiftin_program_v1";
   const DATA_STORAGE_KEY = "bigLiftin_v1";
+  const FEEDBACK_STORAGE_KEY = "shftrs_feedback_v1";
   const DEFAULT_TOTAL_WEEKS = 8;
 
   const MUSCLE_GROUPS = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
@@ -103,6 +104,19 @@
     try { localStorage.setItem(DATA_STORAGE_KEY, JSON.stringify(allData)); } catch {}
   }
 
+  function loadFeedback() {
+    try {
+      const raw = localStorage.getItem(FEEDBACK_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveFeedback() {
+    try { localStorage.setItem(FEEDBACK_STORAGE_KEY, JSON.stringify(feedbackEntries)); } catch {}
+  }
+
   // Superseded by the split/week model; drop the old freeform-logging data.
   localStorage.removeItem("strength_exercises");
   localStorage.removeItem("strength_sessions");
@@ -110,6 +124,7 @@
   let program = loadProgram();
   let allData = loadData();
   if (!allData._totalWeeks) allData._totalWeeks = DEFAULT_TOTAL_WEEKS;
+  let feedbackEntries = loadFeedback();
 
   // One-time migration: fold any previously-named "spare slot" exercises (from the
   // earlier version of this app) into the editable exercise list so they aren't lost.
@@ -923,6 +938,60 @@
     });
     card.appendChild(btn);
     wrap.appendChild(card);
+
+    wrap.appendChild(el("div", "section-label", "FEEDBACK"));
+    const feedbackCard = el("div", "settings-card");
+    feedbackCard.appendChild(el("div", "settings-card-title", "Send feedback"));
+    feedbackCard.appendChild(el("div", "settings-card-desc", "Notes save on this phone. Export them whenever you want to hand them off."));
+    const feedbackInput = el("textarea", "notes-textarea");
+    feedbackInput.placeholder = "What's clunky? What's missing? Anything at all...";
+    feedbackInput.rows = 3;
+    feedbackCard.appendChild(feedbackInput);
+    const addFeedbackBtn = el("button", "settings-btn", "+ Add note");
+    addFeedbackBtn.addEventListener("click", () => {
+      const text = feedbackInput.value.trim();
+      if (!text) { toast("Write something first"); return; }
+      feedbackEntries.unshift({ id: uid(), date: todayISO(), text });
+      saveFeedback();
+      renderMainView();
+      toast("Saved");
+    });
+    feedbackCard.appendChild(addFeedbackBtn);
+    wrap.appendChild(feedbackCard);
+
+    if (feedbackEntries.length > 0) {
+      const exportFeedbackBtn = el("button", "settings-btn", "↓  Export feedback.txt");
+      exportFeedbackBtn.style.marginTop = "10px";
+      exportFeedbackBtn.addEventListener("click", () => {
+        const text = feedbackEntries.map((f) => `${f.date}\n${f.text}`).join("\n\n---\n\n");
+        const blob = new Blob([text], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `shftrs-feedback-${todayISO()}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+      wrap.appendChild(exportFeedbackBtn);
+
+      const feedbackList = el("div", "feedback-list");
+      feedbackEntries.forEach((f) => {
+        const item = el("div", "feedback-item");
+        const head = el("div", "feedback-item-head");
+        head.appendChild(el("span", "feedback-item-date", formatDateShort(f.date)));
+        const delBtn = el("button", "editor-icon-btn danger", "×");
+        delBtn.addEventListener("click", () => {
+          feedbackEntries = feedbackEntries.filter((x) => x.id !== f.id);
+          saveFeedback();
+          renderMainView();
+        });
+        head.appendChild(delBtn);
+        item.appendChild(head);
+        item.appendChild(el("div", "feedback-item-text", f.text));
+        feedbackList.appendChild(item);
+      });
+      wrap.appendChild(feedbackList);
+    }
 
     const logoWrap = el("div", "settings-logo-wrap");
     const logo = document.createElement("img");
