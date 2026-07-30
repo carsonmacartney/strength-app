@@ -6,6 +6,7 @@
   const PROGRAM_STORAGE_KEY = "bigLiftin_program_v1";
   const DATA_STORAGE_KEY = "bigLiftin_v1";
   const FEEDBACK_STORAGE_KEY = "shftrs_feedback_v1";
+  const UI_STATE_STORAGE_KEY = "shftrs_ui_state_v1";
   const DEFAULT_TOTAL_WEEKS = 8;
 
   const MUSCLE_GROUPS = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
@@ -117,6 +118,21 @@
     try { localStorage.setItem(FEEDBACK_STORAGE_KEY, JSON.stringify(feedbackEntries)); } catch {}
   }
 
+  function loadUiState() {
+    try {
+      const raw = localStorage.getItem(UI_STATE_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveUiState() {
+    try {
+      localStorage.setItem(UI_STATE_STORAGE_KEY, JSON.stringify({ activeDay: state.activeDay, activeWeek: state.activeWeek }));
+    } catch {}
+  }
+
   // Superseded by the split/week model; drop the old freeform-logging data.
   localStorage.removeItem("strength_exercises");
   localStorage.removeItem("strength_sessions");
@@ -160,9 +176,12 @@
   function bestSet(sets) {
     if (!sets || sets.length === 0) return null;
     return sets.reduce((best, s) => {
-      const v = (parseFloat(s.weight) || 0) * (parseInt(s.reps, 10) || 0);
-      const bv = (parseFloat(best.weight) || 0) * (parseInt(best.reps, 10) || 0);
-      return v > bv ? s : best;
+      const w = parseFloat(s.weight) || 0;
+      const bw = parseFloat(best.weight) || 0;
+      if (w !== bw) return w > bw ? s : best;
+      const r = parseInt(s.reps, 10) || 0;
+      const br = parseInt(best.reps, 10) || 0;
+      return r > br ? s : best;
     }, sets[0]);
   }
 
@@ -215,13 +234,22 @@
 
   // ---------- App state ----------
 
+  const savedUiState = loadUiState();
+  const restoredDayValid = savedUiState.activeDay &&
+    (savedUiState.activeDay === "Stats" || savedUiState.activeDay === "Settings" || findSplit(savedUiState.activeDay));
+
   const state = {
-    activeDay: program.splits[0] ? program.splits[0].id : "Settings",
-    activeWeek: 1,
+    activeDay: restoredDayValid ? savedUiState.activeDay : (program.splits[0] ? program.splits[0].id : "Settings"),
+    activeWeek: (typeof savedUiState.activeWeek === "number" && savedUiState.activeWeek >= 1) ? savedUiState.activeWeek : 1,
     showWeekPicker: false,
   };
 
   const expandedSplits = new Set();
+  let openCardPersisters = [];
+  function flushOpenCards() {
+    openCardPersisters.forEach((fn) => { try { fn(); } catch {} });
+    openCardPersisters = [];
+  }
 
   const tabbarEl = document.getElementById("tabbar");
   const weekbarEl = document.getElementById("weekbar");
@@ -244,8 +272,10 @@
       btn.style.color = isActive ? color : "";
       if (isActive) btn.style.borderBottomColor = color;
       btn.addEventListener("click", () => {
+        flushOpenCards();
         state.activeDay = dk;
         state.showWeekPicker = false;
+        saveUiState();
         renderTabBar();
         renderWeekBar();
         renderWeekPicker();
@@ -271,8 +301,10 @@
     const prevBtn = el("button", "week-nav-btn", "‹");
     prevBtn.disabled = state.activeWeek === 1;
     prevBtn.addEventListener("click", () => {
+      flushOpenCards();
       state.activeWeek = Math.max(1, state.activeWeek - 1);
       state.showWeekPicker = false;
+      saveUiState();
       renderWeekBar();
       renderWeekPicker();
       renderMainView();
@@ -293,6 +325,7 @@
     const nextBtn = el("button", "week-nav-btn" + (atCap ? " add-week" : ""), atCap ? "+" : "›");
     nextBtn.style.color = atCap ? accent : "";
     nextBtn.addEventListener("click", () => {
+      flushOpenCards();
       if (atCap) {
         allData._totalWeeks = totalWeeks + 1;
         saveData();
@@ -301,6 +334,7 @@
         state.activeWeek = Math.min(totalWeeks, state.activeWeek + 1);
       }
       state.showWeekPicker = false;
+      saveUiState();
       renderWeekBar();
       renderWeekPicker();
       renderMainView();
@@ -327,8 +361,10 @@
       const isDeloadW = !!(allData._deloadWeeks && allData._deloadWeeks[weekLabel(w)]);
       if (isDeloadW) btn.appendChild(el("span", "deload-dot"));
       btn.addEventListener("click", () => {
+        flushOpenCards();
         state.activeWeek = w;
         state.showWeekPicker = false;
+        saveUiState();
         renderWeekBar();
         renderWeekPicker();
         renderMainView();
@@ -338,10 +374,12 @@
 
     const addBtn = el("button", "week-btn add-week-btn", "+ Add");
     addBtn.addEventListener("click", () => {
+      flushOpenCards();
       allData._totalWeeks = totalWeeks + 1;
       saveData();
       state.activeWeek = allData._totalWeeks;
       state.showWeekPicker = false;
+      saveUiState();
       renderWeekBar();
       renderWeekPicker();
       renderMainView();
@@ -390,18 +428,30 @@
     const accent = split.color;
     const weekKey = weekLabel(state.activeWeek);
 
-    const list = el("div");
+    const list = el("div", "reorder-list");
     list.style.setProperty("--accent-color", accent);
 
-    if (split.exercises.length === 0) {
-      list.appendChild(el("div", "empty-msg", "No exercises yet. Add some in Settings → Modify Splits."));
+    const order = getDisplayOrder(splitId, weekKey);
+
+    if (order.length === 0) {
+      list.appendChild(el("div", "empty-msg", "No exercises yet. Add some below or in Settings → Modify Splits."));
     }
 
-    split.exercises.forEach((ex) => {
-      list.appendChild(buildExerciseCard(splitId, ex, weekKey, accent));
-      list.appendChild(buildProgressionLink(splitId, ex.id));
+    order.forEach((exId) => {
+      const ex = resolveExerciseForWeek(splitId, weekKey, exId);
+      if (!ex) return;
+      const isAdhoc = !findExercise(splitId, exId);
+      const itemWrap = el("div", "exercise-item");
+      itemWrap.dataset.exId = exId;
+      const cardEl = buildExerciseCard(splitId, ex, weekKey, accent, isAdhoc);
+      itemWrap.appendChild(cardEl);
+      itemWrap.appendChild(buildProgressionLink(splitId, exId));
+      list.appendChild(itemWrap);
+      cardEl.dragHandle.addEventListener("pointerdown", (e) => startDrag(e, itemWrap, list, splitId, weekKey));
     });
     wrap.appendChild(list);
+
+    wrap.appendChild(buildQuickAddExercise(splitId, weekKey, accent));
 
     if (split.addons.length > 0) {
       const addonsWrap = el("div");
@@ -431,6 +481,130 @@
     const link = el("div", "progression-link", "view progression →");
     link.addEventListener("click", () => openProgression(splitId, exId));
     return link;
+  }
+
+  // ---------- Drag reorder (this week's display order only) ----------
+
+  let dragState = null;
+
+  function startDrag(e, itemEl, listEl, splitId, weekKey) {
+    e.preventDefault();
+    const indicator = el("div", "drop-indicator");
+    dragState = { itemEl, listEl, splitId, weekKey, startY: e.clientY, indicator };
+    itemEl.classList.add("dragging");
+    document.addEventListener("pointermove", onDragMove);
+    document.addEventListener("pointerup", onDragEnd);
+  }
+
+  function dragSiblings() {
+    return [...dragState.listEl.children].filter(
+      (c) => c.classList.contains("exercise-item") && c !== dragState.itemEl
+    );
+  }
+
+  function onDragMove(e) {
+    if (!dragState) return;
+    const dy = e.clientY - dragState.startY;
+    dragState.itemEl.style.transform = `translateY(${dy}px)`;
+
+    const siblings = dragSiblings();
+    let targetIndex = siblings.length;
+    for (let i = 0; i < siblings.length; i++) {
+      const rect = siblings[i].getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) { targetIndex = i; break; }
+    }
+    if (targetIndex >= siblings.length) {
+      dragState.listEl.appendChild(dragState.indicator);
+    } else {
+      dragState.listEl.insertBefore(dragState.indicator, siblings[targetIndex]);
+    }
+  }
+
+  function onDragEnd() {
+    if (!dragState) return;
+    document.removeEventListener("pointermove", onDragMove);
+    document.removeEventListener("pointerup", onDragEnd);
+
+    const { itemEl, listEl, splitId, weekKey, indicator } = dragState;
+    itemEl.style.transform = "";
+    itemEl.classList.remove("dragging");
+    if (indicator.parentNode) {
+      listEl.insertBefore(itemEl, indicator);
+      indicator.remove();
+    }
+
+    const newOrder = [...listEl.children]
+      .filter((c) => c.classList.contains("exercise-item"))
+      .map((c) => c.dataset.exId);
+    ensurePath(splitId, weekKey);
+    allData[splitId][weekKey]._order = newOrder;
+    saveData();
+    dragState = null;
+  }
+
+  // ---------- Quick add exercise (adhoc or permanent) ----------
+
+  function buildQuickAddExercise(splitId, weekKey, accent) {
+    const wrap = el("div", "quickadd-wrap");
+
+    function showPrompt() {
+      wrap.innerHTML = "";
+      const prompt = el("div", "quickadd-prompt");
+      prompt.appendChild(el("span", "plus", "+"));
+      prompt.appendChild(el("span", null, "Add exercise"));
+      prompt.addEventListener("click", showForm);
+      wrap.appendChild(prompt);
+    }
+
+    function showForm() {
+      wrap.innerHTML = "";
+      const formCard = el("div", "quickadd-form");
+
+      const nameInput = el("input", "editor-field editor-field-name");
+      nameInput.placeholder = "Exercise name";
+      formCard.appendChild(nameInput);
+
+      const checkRow = el("label", "quickadd-check-row");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "quickadd-checkbox";
+      checkRow.appendChild(checkbox);
+      checkRow.appendChild(document.createTextNode("Keep in program (adds to every future week)"));
+      formCard.appendChild(checkRow);
+
+      const btnRow = el("div", "quickadd-btn-row");
+      const cancelBtn = el("button", "template-btn", "Cancel");
+      cancelBtn.addEventListener("click", showPrompt);
+      const confirmBtn = el("button", "template-btn", "Add");
+      confirmBtn.style.background = accent;
+      confirmBtn.style.color = "#fff";
+      confirmBtn.style.borderColor = accent;
+      confirmBtn.addEventListener("click", () => {
+        const name = nameInput.value.trim();
+        if (!name) { toast("Enter a name first"); return; }
+        if (checkbox.checked) {
+          const split = findSplit(splitId);
+          split.exercises.push({ id: uid(), name, volume: "", intensity: "", cue: "", muscleGroup: "" });
+          saveProgram();
+          toast(`Added ${name} to the program`);
+        } else {
+          ensurePath(splitId, weekKey);
+          if (!allData[splitId][weekKey]._adhoc) allData[splitId][weekKey]._adhoc = [];
+          allData[splitId][weekKey]._adhoc.push({ id: uid(), name });
+          saveData();
+          toast(`Added ${name} for this week`);
+        }
+        renderMainView();
+      });
+      btnRow.appendChild(cancelBtn);
+      btnRow.appendChild(confirmBtn);
+      formCard.appendChild(btnRow);
+      wrap.appendChild(formCard);
+      nameInput.focus();
+    }
+
+    showPrompt();
+    return wrap;
   }
 
   // ---------- Set row builder ----------
@@ -486,11 +660,17 @@
 
   // ---------- Exercise card ----------
 
-  function buildExerciseCard(splitId, exDef, weekKey, accent) {
+  function buildExerciseCard(splitId, exDef, weekKey, accent, isAdhoc) {
     const card = el("div", "exercise-card");
     const header = el("div", "exercise-card-header");
     const body = el("div", "exercise-card-body hidden");
     let open = false;
+    let setsContainer = null;
+    let notesInput = null;
+
+    const dragHandle = el("div", "drag-handle", "⋮⋮");
+    dragHandle.addEventListener("click", (e) => e.stopPropagation());
+    card.dragHandle = dragHandle;
 
     function saved() {
       return allData[splitId] && allData[splitId][weekKey] && allData[splitId][weekKey][exDef.id];
@@ -512,14 +692,23 @@
         .filter(([k]) => k !== weekKey && !k.startsWith("_"))
         .flatMap(([, wk]) => (wk && wk[exDef.id] && wk[exDef.id].sets) || []);
       if (allWeekSets.length === 0) return false;
-      const currentVol = (parseFloat(currentBest.weight) || 0) * (parseInt(currentBest.reps, 10) || 0);
-      const maxOther = Math.max(...allWeekSets.map((s) => (parseFloat(s.weight) || 0) * (parseInt(s.reps, 10) || 0)));
-      return currentVol > maxOther;
+      const currentWeight = parseFloat(currentBest.weight) || 0;
+      const maxOtherWeight = Math.max(...allWeekSets.map((s) => parseFloat(s.weight) || 0));
+      return currentWeight > maxOtherWeight;
+    }
+
+    function persistIfOpen() {
+      if (!setsContainer) return;
+      const clean = readSetsFromContainer(setsContainer);
+      ensurePath(splitId, weekKey);
+      allData[splitId][weekKey][exDef.id] = { sets: clean, note: notesInput ? notesInput.value : "", date: todayISO() };
+      saveData();
     }
 
     function renderHeader() {
       header.innerHTML = "";
       header.classList.toggle("open", open);
+      header.appendChild(dragHandle);
 
       const top = el("div", "exercise-card-top");
       const left = el("div");
@@ -535,6 +724,7 @@
         pr.style.background = accent;
         nameRow.appendChild(pr);
       }
+      if (isAdhoc) nameRow.appendChild(el("span", "adhoc-tag", "this week only"));
       left.appendChild(nameRow);
 
       const meta = el("div", "exercise-meta");
@@ -582,7 +772,7 @@
         body.appendChild(box);
       }
 
-      const setsContainer = el("div", "sets-container");
+      setsContainer = el("div", "sets-container");
       const initialSets = (s && s.sets && s.sets.length > 0) ? s.sets : [{ weight: "", reps: "", rpe: "" }];
       initialSets.forEach((st) => setsContainer.appendChild(buildSetRow(st, accent)));
       body.appendChild(setsContainer);
@@ -592,24 +782,26 @@
       addBtn.style.borderColor = accent;
       addBtn.style.color = accent;
       addBtn.addEventListener("click", () => {
-        setsContainer.appendChild(buildSetRow({ weight: "", reps: "", rpe: "" }, accent));
+        const rows = setsContainer.querySelectorAll(".set-row");
+        const lastRow = rows[rows.length - 1];
+        const carryWeight = lastRow ? lastRow.querySelector(".set-input-weight").value : "";
+        const carryReps = lastRow ? lastRow.querySelector(".set-input-reps").value : "";
+        setsContainer.appendChild(buildSetRow({ weight: carryWeight, reps: carryReps, rpe: "" }, accent));
       });
       body.appendChild(addBtn);
 
-      const notes = el("textarea", "notes-textarea");
-      notes.placeholder = "Notes (optional)";
-      notes.rows = 2;
-      notes.value = (s && s.note) || "";
-      body.appendChild(notes);
+      notesInput = el("textarea", "notes-textarea");
+      notesInput.placeholder = "Notes (optional)";
+      notesInput.rows = 2;
+      notesInput.value = (s && s.note) || "";
+      body.appendChild(notesInput);
 
       const saveBtn = el("button", "save-btn", "Save");
       saveBtn.type = "button";
       saveBtn.style.background = accent;
       saveBtn.addEventListener("click", () => {
-        const clean = readSetsFromContainer(setsContainer);
-        ensurePath(splitId, weekKey);
-        allData[splitId][weekKey][exDef.id] = { sets: clean, note: notes.value, date: todayISO() };
-        saveData();
+        persistIfOpen();
+        openCardPersisters = openCardPersisters.filter((fn) => fn !== persistIfOpen);
         open = false;
         body.classList.add("hidden");
         renderHeader();
@@ -619,8 +811,15 @@
     }
 
     header.addEventListener("click", () => {
+      if (open) {
+        persistIfOpen();
+        openCardPersisters = openCardPersisters.filter((fn) => fn !== persistIfOpen);
+      }
       open = !open;
-      if (open) renderBody();
+      if (open) {
+        renderBody();
+        openCardPersisters.push(persistIfOpen);
+      }
       body.classList.toggle("hidden", !open);
       renderHeader();
     });
@@ -633,9 +832,46 @@
 
   // ---------- Progression view ----------
 
+  function findAdhocStub(splitId, exId) {
+    const dayData = allData[splitId];
+    if (!dayData) return null;
+    for (const key of Object.keys(dayData)) {
+      if (key.startsWith("_")) continue;
+      const adhoc = dayData[key]._adhoc;
+      const match = adhoc && adhoc.find((a) => a.id === exId);
+      if (match) return match;
+    }
+    return null;
+  }
+
   function resolveDisplayName(splitId, storageKey) {
     const ex = findExercise(splitId, storageKey);
-    return ex ? ex.name : "Deleted exercise";
+    if (ex) return ex.name;
+    const adhoc = findAdhocStub(splitId, storageKey);
+    return adhoc ? adhoc.name : "Deleted exercise";
+  }
+
+  function resolveExerciseForWeek(splitId, weekKey, exId) {
+    const ex = findExercise(splitId, exId);
+    if (ex) return ex;
+    const weekData = allData[splitId] && allData[splitId][weekKey];
+    const adhoc = weekData && weekData._adhoc && weekData._adhoc.find((a) => a.id === exId);
+    if (adhoc) return { id: adhoc.id, name: adhoc.name, volume: "", intensity: "", cue: "", muscleGroup: "" };
+    return null;
+  }
+
+  function getDisplayOrder(splitId, weekKey) {
+    const split = findSplit(splitId);
+    const permanentIds = split ? split.exercises.map((e) => e.id) : [];
+    const weekData = allData[splitId] && allData[splitId][weekKey];
+    const adhocIds = (weekData && weekData._adhoc) ? weekData._adhoc.map((a) => a.id) : [];
+    const allIds = [...permanentIds, ...adhocIds];
+    const custom = weekData && weekData._order;
+    if (!custom) return allIds;
+    const known = new Set(allIds);
+    const ordered = custom.filter((id) => known.has(id));
+    allIds.forEach((id) => { if (!ordered.includes(id)) ordered.push(id); });
+    return ordered;
   }
 
   function openProgression(splitId, storageKey) {
@@ -730,7 +966,7 @@
             splitName: split.name,
             weekKey: key,
             storageKey: exKey,
-            displayName: ex ? ex.name : "Deleted exercise",
+            displayName: resolveDisplayName(split.id, exKey),
             muscleGroup: (ex && ex.muscleGroup) || "Untagged",
             volume: totalVol(entry.sets),
             setCount: entry.sets.length,
@@ -1090,7 +1326,9 @@
       expandedSplits.delete(split.id);
       saveProgram();
       if (state.activeDay === split.id) {
+        flushOpenCards();
         state.activeDay = program.splits[0] ? program.splits[0].id : "Settings";
+        saveUiState();
       }
       renderSplitsEditor();
       renderTabBar(); renderWeekBar(); renderWeekPicker(); renderMainView();
@@ -1284,10 +1522,12 @@
       const loadBtn = el("button", "template-btn", "Load");
       loadBtn.addEventListener("click", () => {
         if (!confirm(`Load "${t.name}"? This replaces your current active splits. Logged history is kept and stays reachable if you switch back later.`)) return;
+        flushOpenCards();
         program.splits = JSON.parse(JSON.stringify(t.splits));
         saveProgram();
         state.activeDay = program.splits[0] ? program.splits[0].id : "Settings";
         state.showWeekPicker = false;
+        saveUiState();
         closeSplitsEditor();
         renderTabBar(); renderWeekBar(); renderWeekPicker(); renderMainView();
         toast(`Loaded "${t.name}"`);
