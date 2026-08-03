@@ -7,9 +7,10 @@
   const DATA_STORAGE_KEY = "bigLiftin_v1";
   const FEEDBACK_STORAGE_KEY = "shftrs_feedback_v1";
   const UI_STATE_STORAGE_KEY = "shftrs_ui_state_v1";
+  const LIBRARY_STORAGE_KEY = "shftrs_library_v1";
   const DEFAULT_TOTAL_WEEKS = 8;
 
-  const MUSCLE_GROUPS = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
+  const MUSCLE_GROUPS = ["Chest", "Back", "Lats", "Shoulders", "Biceps", "Triceps", "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
   const COLOR_PALETTE = ["#E53935", "#1E88E5", "#43A047", "#8E24AA", "#F9A825", "#00ACC1", "#D81B60", "#6D4C41", "#5E35B1", "#00897B"];
 
   // Ported from the original hardcoded program. IDs match the original split/exercise
@@ -133,6 +134,19 @@
     } catch {}
   }
 
+  function loadLibrary() {
+    try {
+      const raw = localStorage.getItem(LIBRARY_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveLibrary() {
+    try { localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(library)); } catch {}
+  }
+
   // Superseded by the split/week model; drop the old freeform-logging data.
   localStorage.removeItem("strength_exercises");
   localStorage.removeItem("strength_sessions");
@@ -141,6 +155,7 @@
   let allData = loadData();
   if (!allData._totalWeeks) allData._totalWeeks = DEFAULT_TOTAL_WEEKS;
   let feedbackEntries = loadFeedback();
+  let library = loadLibrary();
 
   // One-time migration: fold any previously-named "spare slot" exercises (from the
   // earlier version of this app) into the editable exercise list so they aren't lost.
@@ -160,12 +175,93 @@
     if (changed) saveProgram();
   })();
 
+  // One-time migration: build the shared exercise library from whatever exercises
+  // already exist across splits (and any historical adhoc entries), so nothing is
+  // lost and everything becomes pickable/reusable going forward. Also reassigns
+  // obvious lat-dominant movements from "Back" to the new "Lats" group.
+  if (!library) {
+    library = [];
+    const seen = new Set();
+    program.splits.forEach((split) => {
+      split.exercises.forEach((ex) => {
+        if (seen.has(ex.id)) return;
+        seen.add(ex.id);
+        let muscleGroup = ex.muscleGroup || "";
+        if (muscleGroup === "Back" && /neutral chins|chin-?up|pull-?up|lat pulldown/i.test(ex.name)) {
+          muscleGroup = "Lats";
+        }
+        library.push({ id: ex.id, name: ex.name, muscleGroup });
+      });
+    });
+    Object.keys(allData).forEach((splitId) => {
+      if (splitId.startsWith("_")) return;
+      const dayData = allData[splitId];
+      Object.keys(dayData).forEach((weekKey) => {
+        if (weekKey.startsWith("_")) return;
+        const adhoc = dayData[weekKey]._adhoc;
+        if (!adhoc) return;
+        adhoc.forEach((a) => {
+          if (seen.has(a.id)) return;
+          seen.add(a.id);
+          library.push({ id: a.id, name: a.name, muscleGroup: "" });
+        });
+      });
+    });
+    saveLibrary();
+    program.splits.forEach((split) => {
+      split.exercises.forEach((ex) => {
+        const lib = library.find((l) => l.id === ex.id);
+        if (lib && lib.muscleGroup === "Lats" && ex.muscleGroup !== "Lats") ex.muscleGroup = "Lats";
+      });
+    });
+    saveProgram();
+  }
+
   // ---------- Helpers ----------
 
   function findSplit(id) { return program.splits.find((s) => s.id === id); }
   function findExercise(splitId, exId) {
     const split = findSplit(splitId);
     return split ? split.exercises.find((e) => e.id === exId) : null;
+  }
+  function findLibraryExercise(exId) { return library.find((e) => e.id === exId); }
+
+  function updateLibraryExercise(exId, updates) {
+    let lib = findLibraryExercise(exId);
+    if (!lib) {
+      lib = { id: exId, name: updates.name || "Exercise", muscleGroup: updates.muscleGroup || "" };
+      library.push(lib);
+    } else {
+      if (updates.name !== undefined) lib.name = updates.name;
+      if (updates.muscleGroup !== undefined) lib.muscleGroup = updates.muscleGroup;
+    }
+    saveLibrary();
+    program.splits.forEach((split) => {
+      split.exercises.forEach((ex) => {
+        if (ex.id === exId) {
+          if (updates.name !== undefined) ex.name = lib.name;
+          if (updates.muscleGroup !== undefined) ex.muscleGroup = lib.muscleGroup;
+        }
+      });
+    });
+    saveProgram();
+  }
+
+  function splitsUsingExercise(exId) {
+    const ids = new Set();
+    program.splits.forEach((split) => {
+      if (split.exercises.some((e) => e.id === exId)) ids.add(split.id);
+    });
+    Object.keys(allData).forEach((splitId) => {
+      if (splitId.startsWith("_") || !findSplit(splitId)) return;
+      const dayData = allData[splitId];
+      Object.keys(dayData).forEach((weekKey) => {
+        if (weekKey.startsWith("_")) return;
+        const adhoc = dayData[weekKey]._adhoc;
+        if (adhoc && adhoc.some((a) => a.id === exId)) ids.add(splitId);
+      });
+    });
+    return [...ids];
   }
   function accentFor(splitId) { const s = findSplit(splitId); return s ? s.color : "#888"; }
   function allTabs() { return [...program.splits.map((s) => s.id), "Stats", "Settings"]; }
@@ -245,6 +341,7 @@
   };
 
   const expandedSplits = new Set();
+  const showingAddExercisePicker = new Set();
   let openCardPersisters = [];
   function flushOpenCards() {
     openCardPersisters.forEach((fn) => { try { fn(); } catch {} });
@@ -542,6 +639,72 @@
     dragState = null;
   }
 
+  // ---------- Shared exercise picker (pick existing from library, or create new) ----------
+
+  function buildExercisePicker(opts) {
+    const wrap = el("div", "picker-wrap");
+
+    const searchInput = el("input", "editor-field picker-search");
+    searchInput.placeholder = "Search or type new exercise name…";
+    wrap.appendChild(searchInput);
+
+    const listEl = el("div", "picker-list");
+    wrap.appendChild(listEl);
+
+    const newRow = el("div", "picker-create-row hidden");
+    wrap.appendChild(newRow);
+
+    function renderList() {
+      const query = searchInput.value.trim().toLowerCase();
+      listEl.innerHTML = "";
+      const excludeSet = new Set(opts.excludeIds || []);
+      const matches = library
+        .filter((ex) => !excludeSet.has(ex.id))
+        .filter((ex) => !query || ex.name.toLowerCase().includes(query))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      if (matches.length === 0) {
+        listEl.appendChild(el("div", "picker-empty", query ? "No matches" : "No saved exercises yet"));
+      }
+      matches.forEach((ex) => {
+        const row = el("div", "picker-row");
+        row.appendChild(el("span", "picker-row-name", ex.name));
+        if (ex.muscleGroup) row.appendChild(el("span", "picker-row-tag", ex.muscleGroup));
+        row.addEventListener("click", () => opts.onSelectExisting(ex.id));
+        listEl.appendChild(row);
+      });
+
+      newRow.innerHTML = "";
+      const exactMatch = library.some((ex) => ex.name.toLowerCase() === query);
+      if (query && !exactMatch) {
+        newRow.classList.remove("hidden");
+        const createBtn = el("div", "picker-create-btn");
+        createBtn.appendChild(el("span", "plus", "+"));
+        createBtn.appendChild(el("span", null, `Create "${searchInput.value.trim()}"`));
+        const mgSelect = el("select", "editor-muscle-select");
+        const blankOpt = el("option", null, "Muscle group (optional)…");
+        blankOpt.value = "";
+        mgSelect.appendChild(blankOpt);
+        MUSCLE_GROUPS.forEach((mg) => {
+          const opt = el("option", null, mg);
+          opt.value = mg;
+          mgSelect.appendChild(opt);
+        });
+        createBtn.addEventListener("click", () => opts.onCreateNew(searchInput.value.trim(), mgSelect.value));
+        newRow.appendChild(createBtn);
+        newRow.appendChild(mgSelect);
+      } else {
+        newRow.classList.add("hidden");
+      }
+    }
+
+    searchInput.addEventListener("input", renderList);
+    renderList();
+    setTimeout(() => searchInput.focus(), 0);
+
+    return wrap;
+  }
+
   // ---------- Quick add exercise (adhoc or permanent) ----------
 
   function buildQuickAddExercise(splitId, weekKey, accent) {
@@ -560,9 +723,12 @@
       wrap.innerHTML = "";
       const formCard = el("div", "quickadd-form");
 
-      const nameInput = el("input", "editor-field editor-field-name");
-      nameInput.placeholder = "Exercise name";
-      formCard.appendChild(nameInput);
+      const split = findSplit(splitId);
+      const weekData = allData[splitId] && allData[splitId][weekKey];
+      const existingIds = [
+        ...split.exercises.map((e) => e.id),
+        ...((weekData && weekData._adhoc) ? weekData._adhoc.map((a) => a.id) : []),
+      ];
 
       const checkRow = el("label", "quickadd-check-row");
       const checkbox = document.createElement("input");
@@ -572,35 +738,38 @@
       checkRow.appendChild(document.createTextNode("Keep in program (adds to every future week)"));
       formCard.appendChild(checkRow);
 
-      const btnRow = el("div", "quickadd-btn-row");
-      const cancelBtn = el("button", "template-btn", "Cancel");
-      cancelBtn.addEventListener("click", showPrompt);
-      const confirmBtn = el("button", "template-btn", "Add");
-      confirmBtn.style.background = accent;
-      confirmBtn.style.color = "#fff";
-      confirmBtn.style.borderColor = accent;
-      confirmBtn.addEventListener("click", () => {
-        const name = nameInput.value.trim();
-        if (!name) { toast("Enter a name first"); return; }
+      function addExisting(libId) {
+        const lib = findLibraryExercise(libId);
         if (checkbox.checked) {
-          const split = findSplit(splitId);
-          split.exercises.push({ id: uid(), name, volume: "", intensity: "", cue: "", muscleGroup: "" });
+          split.exercises.push({ id: libId, name: lib.name, volume: "", intensity: "", cue: "", muscleGroup: lib.muscleGroup || "" });
           saveProgram();
-          toast(`Added ${name} to the program`);
+          toast(`Added ${lib.name} to the program`);
         } else {
           ensurePath(splitId, weekKey);
           if (!allData[splitId][weekKey]._adhoc) allData[splitId][weekKey]._adhoc = [];
-          allData[splitId][weekKey]._adhoc.push({ id: uid(), name });
+          allData[splitId][weekKey]._adhoc.push({ id: libId, name: lib.name });
           saveData();
-          toast(`Added ${name} for this week`);
+          toast(`Added ${lib.name} for this week`);
         }
         renderMainView();
-      });
+      }
+
+      function addNew(name, muscleGroup) {
+        const id = uid();
+        library.push({ id, name, muscleGroup });
+        saveLibrary();
+        addExisting(id);
+      }
+
+      const picker = buildExercisePicker({ excludeIds: existingIds, onSelectExisting: addExisting, onCreateNew: addNew });
+      formCard.appendChild(picker);
+
+      const btnRow = el("div", "quickadd-btn-row");
+      const cancelBtn = el("button", "template-btn", "Cancel");
+      cancelBtn.addEventListener("click", showPrompt);
       btnRow.appendChild(cancelBtn);
-      btnRow.appendChild(confirmBtn);
       formCard.appendChild(btnRow);
       wrap.appendChild(formCard);
-      nameInput.focus();
     }
 
     showPrompt();
@@ -680,20 +849,35 @@
       const wn = weekNum(weekKey);
       if (wn <= 1) return null;
       const prevKey = weekLabel(wn - 1);
-      const prevData = allData[splitId] && allData[splitId][prevKey] && allData[splitId][prevKey][exDef.id];
-      if (!prevData || !prevData.sets || prevData.sets.length === 0) return null;
-      return { data: prevData, best: bestSet(prevData.sets) };
+      const relevantSplits = splitsUsingExercise(exDef.id);
+      let combinedSets = [];
+      const notes = [];
+      relevantSplits.forEach((sId) => {
+        const d = allData[sId] && allData[sId][prevKey] && allData[sId][prevKey][exDef.id];
+        if (d && d.sets && d.sets.length > 0) {
+          combinedSets = combinedSets.concat(d.sets);
+          if (d.note) notes.push(d.note);
+        }
+      });
+      if (combinedSets.length === 0) return null;
+      return { data: { sets: combinedSets, note: notes.join(" · ") }, best: bestSet(combinedSets) };
     }
 
     function computeIsPR(currentSets) {
       const currentBest = bestSet(currentSets);
       if (!currentBest) return false;
-      const allWeekSets = Object.entries(allData[splitId] || {})
-        .filter(([k]) => k !== weekKey && !k.startsWith("_"))
-        .flatMap(([, wk]) => (wk && wk[exDef.id] && wk[exDef.id].sets) || []);
-      if (allWeekSets.length === 0) return false;
+      const relevantSplits = splitsUsingExercise(exDef.id);
+      let allOtherSets = [];
+      relevantSplits.forEach((sId) => {
+        Object.entries(allData[sId] || {})
+          .filter(([k]) => !(sId === splitId && k === weekKey) && !k.startsWith("_"))
+          .forEach(([, wk]) => {
+            if (wk[exDef.id] && wk[exDef.id].sets) allOtherSets = allOtherSets.concat(wk[exDef.id].sets);
+          });
+      });
+      if (allOtherSets.length === 0) return false;
       const currentWeight = parseFloat(currentBest.weight) || 0;
-      const maxOtherWeight = Math.max(...allWeekSets.map((s) => parseFloat(s.weight) || 0));
+      const maxOtherWeight = Math.max(...allOtherSets.map((s) => parseFloat(s.weight) || 0));
       return currentWeight > maxOtherWeight;
     }
 
@@ -874,8 +1058,8 @@
     return ordered;
   }
 
-  function openProgression(splitId, storageKey) {
-    const accent = accentFor(splitId);
+  function openProgression(anchorSplitId, storageKey) {
+    const accent = accentFor(anchorSplitId);
     progressionViewEl.innerHTML = "";
     progressionViewEl.classList.remove("hidden");
 
@@ -887,31 +1071,40 @@
     });
     headerRow.appendChild(back);
     const titleWrap = el("div");
-    titleWrap.appendChild(el("div", "progression-title", resolveDisplayName(splitId, storageKey)));
+    titleWrap.appendChild(el("div", "progression-title", resolveDisplayName(anchorSplitId, storageKey)));
     titleWrap.appendChild(el("div", "progression-subtitle", "Progression"));
     headerRow.appendChild(titleWrap);
     progressionViewEl.appendChild(headerRow);
 
-    const weeks = Object.keys(allData[splitId] || {})
-      .filter((k) => !k.startsWith("_"))
-      .sort((a, b) => weekNum(a) - weekNum(b));
-
-    const entries = weeks
-      .map((wk) => ({ week: wk, data: allData[splitId][wk] && allData[splitId][wk][storageKey] }))
-      .filter((e) => e.data && e.data.sets && e.data.sets.length > 0);
+    const relevantSplits = splitsUsingExercise(storageKey);
+    const multiSplit = relevantSplits.length > 1;
+    const entries = [];
+    relevantSplits.forEach((sId) => {
+      const dayData = allData[sId] || {};
+      Object.keys(dayData).forEach((wk) => {
+        if (wk.startsWith("_")) return;
+        const data = dayData[wk][storageKey];
+        if (data && data.sets && data.sets.length > 0) {
+          const s = findSplit(sId);
+          entries.push({ splitName: s ? s.name : sId, splitColor: accentFor(sId), week: wk, data });
+        }
+      });
+    });
+    entries.sort((a, b) => weekNum(a.week) - weekNum(b.week) || a.splitName.localeCompare(b.splitName));
 
     if (entries.length === 0) {
       progressionViewEl.appendChild(el("div", "progression-empty", "No data logged yet"));
       return;
     }
 
-    entries.forEach(({ week, data }) => {
+    entries.forEach(({ splitName, splitColor, week, data }) => {
+      const rowAccent = multiSplit ? splitColor : accent;
       const best = bestSet(data.sets);
       const vol = totalVol(data.sets);
       const card = el("div", "progression-week-card");
       const head = el("div", "progression-week-head");
-      const wname = el("span", "progression-week-name", week);
-      wname.style.color = accent;
+      const wname = el("span", "progression-week-name", multiSplit ? `${week} · ${splitName}` : week);
+      wname.style.color = rowAccent;
       head.appendChild(wname);
       head.appendChild(el("span", "progression-week-vol", `Vol: ${vol.toFixed(0)}kg`));
       card.appendChild(head);
@@ -920,20 +1113,20 @@
       data.sets.forEach((s) => {
         const isBest = s === best;
         const chip = el("span", "progression-set-chip" + (isBest ? " best" : ""));
-        chip.style.background = isBest ? accent + "22" : "";
-        chip.style.borderColor = isBest ? accent : "";
+        chip.style.background = isBest ? rowAccent + "22" : "";
+        chip.style.borderColor = isBest ? rowAccent : "";
         chip.style.color = isBest ? "#fff" : "";
         chip.textContent = `${s.weight}kg × ${s.reps}`;
         if (s.rpe) {
           const rpeSpan = el("span", null, ` @${s.rpe}`);
-          rpeSpan.style.color = accent;
+          rpeSpan.style.color = rowAccent;
           rpeSpan.style.fontSize = "11px";
           rpeSpan.style.marginLeft = "4px";
           chip.appendChild(rpeSpan);
         }
         if (isBest) {
           const bestTag = el("span", "progression-set-best-tag", "best");
-          bestTag.style.color = accent;
+          bestTag.style.color = rowAccent;
           chip.appendChild(bestTag);
         }
         chips.appendChild(chip);
@@ -1005,6 +1198,22 @@
     box3.appendChild(el("div", "stat-label", "This Week"));
     statGrid.appendChild(box1); statGrid.appendChild(box2); statGrid.appendChild(box3);
     wrap.appendChild(statGrid);
+
+    const trainingWeekKey = weekLabel(state.activeWeek);
+    const calendarWeekVol = items.filter((i) => i.date >= weekStartISO).reduce((s, i) => s + i.volume, 0);
+    const trainingWeekVol = items.filter((i) => i.weekKey === trainingWeekKey).reduce((s, i) => s + i.volume, 0);
+
+    wrap.appendChild(el("div", "section-label", "WEEKLY VOLUME"));
+    const weekVolGrid = el("div", "stat-grid");
+    weekVolGrid.style.gridTemplateColumns = "repeat(2, 1fr)";
+    const wbox1 = el("div", "stat-box");
+    wbox1.appendChild(el("div", "stat-value", calendarWeekVol >= 1000 ? `${(calendarWeekVol / 1000).toFixed(1)}k` : calendarWeekVol.toFixed(0)));
+    wbox1.appendChild(el("div", "stat-label", "Calendar Wk (kg)"));
+    const wbox2 = el("div", "stat-box");
+    wbox2.appendChild(el("div", "stat-value", trainingWeekVol >= 1000 ? `${(trainingWeekVol / 1000).toFixed(1)}k` : trainingWeekVol.toFixed(0)));
+    wbox2.appendChild(el("div", "stat-label", `Training ${trainingWeekKey} (kg)`));
+    weekVolGrid.appendChild(wbox1); weekVolGrid.appendChild(wbox2);
+    wrap.appendChild(weekVolGrid);
 
     wrap.appendChild(el("div", "section-label", "ADHERENCE"));
     wrap.appendChild(buildHeatmap(items));
@@ -1369,11 +1578,37 @@
 
       const addExBtn = el("button", "editor-add-btn", "+ Add exercise");
       addExBtn.addEventListener("click", () => {
-        split.exercises.push({ id: uid(), name: "New Exercise", volume: "", intensity: "", cue: "", muscleGroup: "" });
-        saveProgram();
+        if (showingAddExercisePicker.has(split.id)) showingAddExercisePicker.delete(split.id);
+        else showingAddExercisePicker.add(split.id);
         renderSplitsEditor();
       });
       body.appendChild(addExBtn);
+
+      if (showingAddExercisePicker.has(split.id)) {
+        const existingIds = split.exercises.map((e) => e.id);
+        const picker = buildExercisePicker({
+          excludeIds: existingIds,
+          onSelectExisting: (libId) => {
+            const lib = findLibraryExercise(libId);
+            split.exercises.push({ id: libId, name: lib.name, volume: "", intensity: "", cue: "", muscleGroup: lib.muscleGroup || "" });
+            saveProgram();
+            showingAddExercisePicker.delete(split.id);
+            renderSplitsEditor();
+            toast(`Added ${lib.name}`);
+          },
+          onCreateNew: (name, muscleGroup) => {
+            const id = uid();
+            library.push({ id, name, muscleGroup });
+            saveLibrary();
+            split.exercises.push({ id, name, volume: "", intensity: "", cue: "", muscleGroup });
+            saveProgram();
+            showingAddExercisePicker.delete(split.id);
+            renderSplitsEditor();
+            toast(`Created ${name}`);
+          },
+        });
+        body.appendChild(picker);
+      }
 
       body.appendChild(el("div", "editor-label-small", "ADD-ONS"));
       body.appendChild(buildAddonsEditor(split));
@@ -1391,7 +1626,11 @@
     const nameInput = el("input", "editor-field editor-field-name");
     nameInput.value = ex.name;
     nameInput.placeholder = "Exercise name";
-    nameInput.addEventListener("blur", () => { ex.name = nameInput.value.trim() || ex.name; nameInput.value = ex.name; saveProgram(); });
+    nameInput.addEventListener("blur", () => {
+      const newName = nameInput.value.trim() || ex.name;
+      nameInput.value = newName;
+      updateLibraryExercise(ex.id, { name: newName });
+    });
     top.appendChild(nameInput);
 
     const upBtn = el("button", "editor-icon-btn", "↑");
@@ -1451,7 +1690,7 @@
       if (ex.muscleGroup === mg) opt.selected = true;
       select.appendChild(opt);
     });
-    select.addEventListener("change", () => { ex.muscleGroup = select.value; saveProgram(); });
+    select.addEventListener("change", () => { updateLibraryExercise(ex.id, { muscleGroup: select.value }); });
     row.appendChild(select);
 
     return row;

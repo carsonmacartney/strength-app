@@ -465,6 +465,65 @@ button, input, textarea { font-family: inherit; }
   letter-spacing: 0.02em;
 }
 
+/* Exercise picker (pick existing from library, or create new) */
+.picker-wrap {
+  margin-bottom: 4px;
+}
+.picker-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}
+.picker-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--surface-2);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--surface-2);
+}
+.picker-row:last-child { border-bottom: none; }
+.picker-row:active { background: var(--surface-2); }
+.picker-row-name { font-size: 13px; color: #ddd; }
+.picker-row-tag {
+  font-size: 10px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  padding: 2px 7px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+.picker-empty {
+  padding: 14px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.picker-create-row { margin-bottom: 8px; }
+.picker-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.picker-create-btn .plus { font-size: 16px; }
+
 /* Quick add exercise (on the day view) */
 .quickadd-wrap {
   margin: 4px 0 8px;
