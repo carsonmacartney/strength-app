@@ -684,6 +684,30 @@ button, input, textarea { font-family: inherit; }
   color: var(--text-dimmer);
   font-size: 12px;
   font-style: italic;
+  margin-bottom: 12px;
+}
+.progression-split-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  margin-top: 6px;
+}
+.progression-split-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.progression-split-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ddd;
+}
+.progression-split-vol {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: auto;
 }
 
 /* Settings / Stats generic view padding */

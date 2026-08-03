@@ -263,6 +263,56 @@
     });
     return [...ids];
   }
+
+  // Merge a duplicate library exercise into the canonical one it should have always
+  // been: repoints any split reference, migrates logged history to the kept id, and
+  // drops the duplicate. Safe to call repeatedly - no-ops once already merged.
+  function mergeLibraryExercises(keepId, mergeId) {
+    if (keepId === mergeId) return;
+    if (!library.find((e) => e.id === mergeId)) return;
+
+    program.splits.forEach((split) => {
+      const idx = split.exercises.findIndex((e) => e.id === mergeId);
+      if (idx === -1) return;
+      if (split.exercises.some((e) => e.id === keepId)) {
+        split.exercises.splice(idx, 1);
+      } else {
+        split.exercises[idx].id = keepId;
+        const lib = findLibraryExercise(keepId);
+        if (lib) {
+          split.exercises[idx].name = lib.name;
+          split.exercises[idx].muscleGroup = lib.muscleGroup;
+        }
+      }
+    });
+
+    Object.keys(allData).forEach((splitId) => {
+      if (splitId.startsWith("_")) return;
+      const dayData = allData[splitId];
+      Object.keys(dayData).forEach((weekKey) => {
+        if (weekKey.startsWith("_")) return;
+        const weekData = dayData[weekKey];
+        if (weekData[mergeId] && weekData[keepId]) {
+          weekData[keepId].sets = (weekData[keepId].sets || []).concat(weekData[mergeId].sets || []);
+          delete weekData[mergeId];
+        } else if (weekData[mergeId]) {
+          weekData[keepId] = weekData[mergeId];
+          delete weekData[mergeId];
+        }
+        if (weekData._adhoc) {
+          weekData._adhoc.forEach((a) => { if (a.id === mergeId) a.id = keepId; });
+        }
+      });
+    });
+
+    library = library.filter((e) => e.id !== mergeId);
+    saveLibrary();
+    saveProgram();
+    saveData();
+  }
+
+  mergeLibraryExercises("Machine Preacher (Pull)", "Machine Preacher (Upper)");
+  mergeLibraryExercises("Lateral Raise", "Lateral Raise (Upper)");
   function accentFor(splitId) { const s = findSplit(splitId); return s ? s.color : "#888"; }
   function allTabs() { return [...program.splits.map((s) => s.id), "Stats", "Settings"]; }
 
@@ -1090,27 +1140,23 @@
         }
       });
     });
-    entries.sort((a, b) => weekNum(a.week) - weekNum(b.week) || a.splitName.localeCompare(b.splitName));
 
     if (entries.length === 0) {
       progressionViewEl.appendChild(el("div", "progression-empty", "No data logged yet"));
       return;
     }
 
-    entries.forEach(({ splitName, splitColor, week, data }) => {
-      const rowAccent = multiSplit ? splitColor : accent;
-      const best = bestSet(data.sets);
-      const vol = totalVol(data.sets);
-      const card = el("div", "progression-week-card");
-      const head = el("div", "progression-week-head");
-      const wname = el("span", "progression-week-name", multiSplit ? `${week} · ${splitName}` : week);
-      wname.style.color = rowAccent;
-      head.appendChild(wname);
-      head.appendChild(el("span", "progression-week-vol", `Vol: ${vol.toFixed(0)}kg`));
-      card.appendChild(head);
+    const byWeek = {};
+    entries.forEach((e) => {
+      if (!byWeek[e.week]) byWeek[e.week] = [];
+      byWeek[e.week].push(e);
+    });
+    const weekKeys = Object.keys(byWeek).sort((a, b) => weekNum(a) - weekNum(b));
 
+    function buildSetChips(sets, rowAccent) {
+      const best = bestSet(sets);
       const chips = el("div", "progression-sets");
-      data.sets.forEach((s) => {
+      sets.forEach((s) => {
         const isBest = s === best;
         const chip = el("span", "progression-set-chip" + (isBest ? " best" : ""));
         chip.style.background = isBest ? rowAccent + "22" : "";
@@ -1131,9 +1177,37 @@
         }
         chips.appendChild(chip);
       });
-      card.appendChild(chips);
+      return chips;
+    }
 
-      if (data.note) card.appendChild(el("div", "progression-note", data.note));
+    weekKeys.forEach((wk) => {
+      const splitEntries = byWeek[wk].sort((a, b) => a.splitName.localeCompare(b.splitName));
+      const card = el("div", "progression-week-card");
+
+      const head = el("div", "progression-week-head");
+      const wname = el("span", "progression-week-name", wk);
+      wname.style.color = accent;
+      head.appendChild(wname);
+      if (!multiSplit) {
+        head.appendChild(el("span", "progression-week-vol", `Vol: ${totalVol(splitEntries[0].data.sets).toFixed(0)}kg`));
+      }
+      card.appendChild(head);
+
+      splitEntries.forEach(({ splitName, splitColor, data }) => {
+        if (multiSplit) {
+          const subHead = el("div", "progression-split-head");
+          const dot = el("span", "progression-split-dot");
+          dot.style.background = splitColor;
+          subHead.appendChild(dot);
+          subHead.appendChild(el("span", "progression-split-name", splitName));
+          subHead.appendChild(el("span", "progression-split-vol", `Vol: ${totalVol(data.sets).toFixed(0)}kg`));
+          card.appendChild(subHead);
+        }
+
+        card.appendChild(buildSetChips(data.sets, multiSplit ? splitColor : accent));
+        if (data.note) card.appendChild(el("div", "progression-note", data.note));
+      });
+
       progressionViewEl.appendChild(card);
     });
   }
