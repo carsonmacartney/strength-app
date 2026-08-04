@@ -709,6 +709,17 @@ button, input, textarea { font-family: inherit; }
   color: var(--text-faint);
   margin-left: auto;
 }
+.progression-remove-wrap {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--surface-2);
+}
+.progression-remove-link {
+  color: var(--text-faintest);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+}
 
 /* Settings / Stats generic view padding */
 .view-pad { padding: 20px 16px; }
@@ -933,6 +944,13 @@ button, input, textarea { font-family: inherit; }
   border-radius: 10px;
   padding: 10px;
   margin-bottom: 8px;
+}
+.editor-week-status {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-style: italic;
+  margin-top: -2px;
+  margin-bottom: 6px;
 }
 .editor-exercise-row-top {
   display: flex;

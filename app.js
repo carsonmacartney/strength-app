@@ -791,9 +791,9 @@
       function addExisting(libId) {
         const lib = findLibraryExercise(libId);
         if (checkbox.checked) {
-          split.exercises.push({ id: libId, name: lib.name, volume: "", intensity: "", cue: "", muscleGroup: lib.muscleGroup || "" });
+          split.exercises.push({ id: libId, name: lib.name, volume: "", intensity: "", cue: "", muscleGroup: lib.muscleGroup || "", startWeek: weekNum(weekKey) });
           saveProgram();
-          toast(`Added ${lib.name} to the program`);
+          toast(`Added ${lib.name} to the program from ${weekKey}`);
         } else {
           ensurePath(splitId, weekKey);
           if (!allData[splitId][weekKey]._adhoc) allData[splitId][weekKey]._adhoc = [];
@@ -1094,9 +1094,19 @@
     return null;
   }
 
+  function isExerciseActiveForWeek(exRef, wn) {
+    if (exRef.startWeek !== undefined && wn < exRef.startWeek) return false;
+    if (exRef.endWeek !== undefined && wn > exRef.endWeek) return false;
+    if (exRef.skipWeeks && exRef.skipWeeks.includes(wn)) return false;
+    return true;
+  }
+
   function getDisplayOrder(splitId, weekKey) {
     const split = findSplit(splitId);
-    const permanentIds = split ? split.exercises.map((e) => e.id) : [];
+    const currentWeekNum = weekNum(weekKey);
+    const permanentIds = split
+      ? split.exercises.filter((e) => isExerciseActiveForWeek(e, currentWeekNum)).map((e) => e.id)
+      : [];
     const weekData = allData[splitId] && allData[splitId][weekKey];
     const adhocIds = (weekData && weekData._adhoc) ? weekData._adhoc.map((a) => a.id) : [];
     const allIds = [...permanentIds, ...adhocIds];
@@ -1143,6 +1153,7 @@
 
     if (entries.length === 0) {
       progressionViewEl.appendChild(el("div", "progression-empty", "No data logged yet"));
+      appendRemoveControl();
       return;
     }
 
@@ -1210,6 +1221,53 @@
 
       progressionViewEl.appendChild(card);
     });
+
+    appendRemoveControl();
+
+    function appendRemoveControl() {
+      const anchorSplit = findSplit(anchorSplitId);
+      const exRef = anchorSplit && anchorSplit.exercises.find((e) => e.id === storageKey);
+      if (!exRef) return;
+
+      const wrap = el("div", "progression-remove-wrap");
+      const link = el("div", "progression-remove-link", `Remove from ${anchorSplit.name}…`);
+      link.addEventListener("click", showForm);
+      wrap.appendChild(link);
+      progressionViewEl.appendChild(wrap);
+
+      function showForm() {
+        wrap.innerHTML = "";
+        const checkRow = el("label", "quickadd-check-row");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "quickadd-checkbox";
+        checkRow.appendChild(checkbox);
+        checkRow.appendChild(document.createTextNode("Also remove from future weeks"));
+        wrap.appendChild(checkRow);
+
+        const btnRow = el("div", "quickadd-btn-row");
+        const cancelBtn = el("button", "template-btn", "Cancel");
+        cancelBtn.addEventListener("click", () => { wrap.innerHTML = ""; wrap.appendChild(link); });
+        const confirmBtn = el("button", "template-btn danger", "Remove");
+        confirmBtn.addEventListener("click", () => {
+          const wn = state.activeWeek;
+          if (checkbox.checked) {
+            exRef.endWeek = wn - 1;
+          } else {
+            if (!exRef.skipWeeks) exRef.skipWeeks = [];
+            if (!exRef.skipWeeks.includes(wn)) exRef.skipWeeks.push(wn);
+          }
+          saveProgram();
+          renderMainView();
+          progressionViewEl.classList.add("hidden");
+          progressionViewEl.innerHTML = "";
+          toast(checkbox.checked ? `Removed from Week ${wn} onward` : `Skipped for Week ${wn}`);
+        });
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(confirmBtn);
+        wrap.appendChild(btnRow);
+      }
+    }
   }
 
   // ---------- Stats view ----------
@@ -1664,21 +1722,21 @@
           excludeIds: existingIds,
           onSelectExisting: (libId) => {
             const lib = findLibraryExercise(libId);
-            split.exercises.push({ id: libId, name: lib.name, volume: "", intensity: "", cue: "", muscleGroup: lib.muscleGroup || "" });
+            split.exercises.push({ id: libId, name: lib.name, volume: "", intensity: "", cue: "", muscleGroup: lib.muscleGroup || "", startWeek: state.activeWeek });
             saveProgram();
             showingAddExercisePicker.delete(split.id);
             renderSplitsEditor();
-            toast(`Added ${lib.name}`);
+            toast(`Added ${lib.name} from Week ${state.activeWeek}`);
           },
           onCreateNew: (name, muscleGroup) => {
             const id = uid();
             library.push({ id, name, muscleGroup });
             saveLibrary();
-            split.exercises.push({ id, name, volume: "", intensity: "", cue: "", muscleGroup });
+            split.exercises.push({ id, name, volume: "", intensity: "", cue: "", muscleGroup, startWeek: state.activeWeek });
             saveProgram();
             showingAddExercisePicker.delete(split.id);
             renderSplitsEditor();
-            toast(`Created ${name}`);
+            toast(`Created ${name} from Week ${state.activeWeek}`);
           },
         });
         body.appendChild(picker);
@@ -1725,14 +1783,22 @@
 
     const delBtn = el("button", "editor-icon-btn danger", "✕");
     delBtn.addEventListener("click", () => {
-      if (!confirm(`Remove "${ex.name}"? Logged history stays saved but it won't show up here anymore.`)) return;
-      split.exercises.splice(exIdx, 1);
+      if (!confirm(`Remove "${ex.name}" starting Week ${state.activeWeek}? It'll still show in weeks before that, and logged history stays saved.`)) return;
+      ex.endWeek = state.activeWeek - 1;
       saveProgram();
       renderSplitsEditor();
     });
     top.appendChild(delBtn);
 
     row.appendChild(top);
+
+    if (ex.startWeek !== undefined || ex.endWeek !== undefined) {
+      const bits = [];
+      if (ex.startWeek !== undefined) bits.push(`active from Week ${ex.startWeek}`);
+      if (ex.endWeek !== undefined) bits.push(`removed after Week ${ex.endWeek}`);
+      const statusTag = el("div", "editor-week-status", bits.join(" · "));
+      row.appendChild(statusTag);
+    }
 
     const grid = el("div", "editor-field-grid");
     const volInput = el("input", "editor-field");
