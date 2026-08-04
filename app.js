@@ -8,6 +8,7 @@
   const FEEDBACK_STORAGE_KEY = "shftrs_feedback_v1";
   const UI_STATE_STORAGE_KEY = "shftrs_ui_state_v1";
   const LIBRARY_STORAGE_KEY = "shftrs_library_v1";
+  const BODYWEIGHT_STORAGE_KEY = "shftrs_bodyweight_v1";
   const DEFAULT_TOTAL_WEEKS = 8;
 
   const MUSCLE_GROUPS = ["Chest", "Back", "Lats", "Shoulders", "Biceps", "Triceps", "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
@@ -147,6 +148,19 @@
     try { localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(library)); } catch {}
   }
 
+  function loadBodyweight() {
+    try {
+      const raw = localStorage.getItem(BODYWEIGHT_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveBodyweight() {
+    try { localStorage.setItem(BODYWEIGHT_STORAGE_KEY, JSON.stringify(bodyweightEntries)); } catch {}
+  }
+
   // Superseded by the split/week model; drop the old freeform-logging data.
   localStorage.removeItem("strength_exercises");
   localStorage.removeItem("strength_sessions");
@@ -156,6 +170,7 @@
   if (!allData._totalWeeks) allData._totalWeeks = DEFAULT_TOTAL_WEEKS;
   let feedbackEntries = loadFeedback();
   let library = loadLibrary();
+  let bodyweightEntries = loadBodyweight();
 
   // One-time migration: fold any previously-named "spare slot" exercises (from the
   // earlier version of this app) into the editable exercise list so they aren't lost.
@@ -334,6 +349,18 @@
   function totalVol(sets) {
     if (!sets || sets.length === 0) return 0;
     return sets.reduce((sum, s) => sum + (parseFloat(s.weight) || 0) * (parseInt(s.reps, 10) || 0), 0);
+  }
+
+  function workingSets(sets) {
+    return (sets || []).filter((s) => !s.warmup);
+  }
+
+  function estimate1RM(weight, reps) {
+    const w = parseFloat(weight) || 0;
+    const r = parseInt(reps, 10) || 0;
+    if (w <= 0 || r <= 0) return 0;
+    if (r === 1) return w;
+    return w * (1 + r / 30);
   }
 
   function todayISO() {
@@ -854,6 +881,11 @@
       rpeInput.style.borderColor = rpeInput.value ? accent + "55" : "";
     });
 
+    const warmupBtn = el("button", "set-warmup-toggle" + (set.warmup ? " active" : ""), "W");
+    warmupBtn.type = "button";
+    warmupBtn.title = "Mark as warm-up";
+    warmupBtn.addEventListener("click", () => warmupBtn.classList.toggle("active"));
+
     const removeBtn = el("button", "set-remove-btn", "×");
     removeBtn.type = "button";
     removeBtn.addEventListener("click", () => row.remove());
@@ -862,6 +894,7 @@
     row.appendChild(timesSpan);
     row.appendChild(repsInput);
     row.appendChild(rpeInput);
+    row.appendChild(warmupBtn);
     row.appendChild(removeBtn);
     return row;
   }
@@ -873,6 +906,7 @@
         weight: row.querySelector(".set-input-weight").value,
         reps: row.querySelector(".set-input-reps").value,
         rpe: row.querySelector(".set-input-rpe").value,
+        warmup: row.querySelector(".set-warmup-toggle").classList.contains("active"),
       }))
       .filter((s) => s.weight !== "" || s.reps !== "");
   }
@@ -910,11 +944,12 @@
         }
       });
       if (combinedSets.length === 0) return null;
-      return { data: { sets: combinedSets, note: notes.join(" · ") }, best: bestSet(combinedSets) };
+      const working = workingSets(combinedSets);
+      return { data: { sets: combinedSets, note: notes.join(" · ") }, best: working.length ? bestSet(working) : null };
     }
 
     function computeIsPR(currentSets) {
-      const currentBest = bestSet(currentSets);
+      const currentBest = bestSet(workingSets(currentSets));
       if (!currentBest) return false;
       const relevantSplits = splitsUsingExercise(exDef.id);
       let allOtherSets = [];
@@ -922,7 +957,7 @@
         Object.entries(allData[sId] || {})
           .filter(([k]) => !(sId === splitId && k === weekKey) && !k.startsWith("_"))
           .forEach(([, wk]) => {
-            if (wk[exDef.id] && wk[exDef.id].sets) allOtherSets = allOtherSets.concat(wk[exDef.id].sets);
+            if (wk[exDef.id] && wk[exDef.id].sets) allOtherSets = allOtherSets.concat(workingSets(wk[exDef.id].sets));
           });
       });
       if (allOtherSets.length === 0) return false;
@@ -968,17 +1003,18 @@
       left.appendChild(meta);
 
       const prev = computePrevBest();
-      if (prev && !open) {
+      if (prev && prev.best && !open) {
         const line = `Last: ${prev.best.weight}kg × ${prev.best.reps}` + (prev.data.sets.length > 1 ? ` (${prev.data.sets.length} sets)` : "");
         left.appendChild(el("div", "exercise-last-week", line));
       }
       top.appendChild(left);
 
+      const workingCurrentSets = workingSets(currentSets);
       const summary = el("div", "exercise-summary");
-      if (currentSets.length > 0) {
-        const best = bestSet(currentSets);
+      if (workingCurrentSets.length > 0) {
+        const best = bestSet(workingCurrentSets);
         summary.appendChild(el("div", "exercise-summary-best", `${best.weight}kg × ${best.reps}`));
-        summary.appendChild(el("div", "exercise-summary-sets", `${currentSets.length} sets`));
+        summary.appendChild(el("div", "exercise-summary-sets", `${workingCurrentSets.length} sets`));
       } else {
         summary.appendChild(el("div", "exercise-summary-empty", "–"));
       }
@@ -999,8 +1035,8 @@
         box.style.borderLeftColor = accent;
         box.appendChild(el("div", "last-week-box-title", "LAST WEEK"));
         prev.data.sets.forEach((st) => {
-          const text = `${st.weight}kg × ${st.reps}` + (st.rpe ? ` @${st.rpe}` : "");
-          box.appendChild(el("span", "last-week-box-set", text));
+          const text = `${st.weight}kg × ${st.reps}` + (st.rpe ? ` @${st.rpe}` : "") + (st.warmup ? " (w)" : "");
+          box.appendChild(el("span", "last-week-box-set" + (st.warmup ? " warmup" : ""), text));
         });
         if (prev.data.note) box.appendChild(el("div", "last-week-box-note", prev.data.note));
         body.appendChild(box);
@@ -1165,11 +1201,11 @@
     const weekKeys = Object.keys(byWeek).sort((a, b) => weekNum(a) - weekNum(b));
 
     function buildSetChips(sets, rowAccent) {
-      const best = bestSet(sets);
+      const best = bestSet(workingSets(sets));
       const chips = el("div", "progression-sets");
       sets.forEach((s) => {
-        const isBest = s === best;
-        const chip = el("span", "progression-set-chip" + (isBest ? " best" : ""));
+        const isBest = best && s === best;
+        const chip = el("span", "progression-set-chip" + (isBest ? " best" : "") + (s.warmup ? " warmup" : ""));
         chip.style.background = isBest ? rowAccent + "22" : "";
         chip.style.borderColor = isBest ? rowAccent : "";
         chip.style.color = isBest ? "#fff" : "";
@@ -1181,6 +1217,10 @@
           rpeSpan.style.marginLeft = "4px";
           chip.appendChild(rpeSpan);
         }
+        if (s.warmup) {
+          const wTag = el("span", "progression-set-warmup-tag", "warm-up");
+          chip.appendChild(wTag);
+        }
         if (isBest) {
           const bestTag = el("span", "progression-set-best-tag", "best");
           bestTag.style.color = rowAccent;
@@ -1189,6 +1229,14 @@
         chips.appendChild(chip);
       });
       return chips;
+    }
+
+    function volAnd1RMText(sets) {
+      const working = workingSets(sets);
+      const vol = totalVol(working);
+      const best = bestSet(working);
+      const oneRM = best ? estimate1RM(best.weight, best.reps) : 0;
+      return `Vol: ${vol.toFixed(0)}kg` + (oneRM > 0 ? `  ·  Est. 1RM: ${oneRM.toFixed(0)}kg` : "");
     }
 
     weekKeys.forEach((wk) => {
@@ -1200,7 +1248,7 @@
       wname.style.color = accent;
       head.appendChild(wname);
       if (!multiSplit) {
-        head.appendChild(el("span", "progression-week-vol", `Vol: ${totalVol(splitEntries[0].data.sets).toFixed(0)}kg`));
+        head.appendChild(el("span", "progression-week-vol", volAnd1RMText(splitEntries[0].data.sets)));
       }
       card.appendChild(head);
 
@@ -1211,7 +1259,7 @@
           dot.style.background = splitColor;
           subHead.appendChild(dot);
           subHead.appendChild(el("span", "progression-split-name", splitName));
-          subHead.appendChild(el("span", "progression-split-vol", `Vol: ${totalVol(data.sets).toFixed(0)}kg`));
+          subHead.appendChild(el("span", "progression-split-vol", volAnd1RMText(data.sets)));
           card.appendChild(subHead);
         }
 
@@ -1293,9 +1341,9 @@
             storageKey: exKey,
             displayName: resolveDisplayName(split.id, exKey),
             muscleGroup: (ex && ex.muscleGroup) || "Untagged",
-            volume: totalVol(entry.sets),
-            setCount: entry.sets.length,
-            best: bestSet(entry.sets),
+            volume: totalVol(workingSets(entry.sets)),
+            setCount: workingSets(entry.sets).length,
+            best: bestSet(workingSets(entry.sets)),
             color: split.color,
           });
         });
@@ -1308,10 +1356,16 @@
     const wrap = el("div", "view-pad");
     const items = collectLogItems();
 
+    wrap.appendChild(el("div", "section-label", "BODYWEIGHT"));
+    wrap.appendChild(buildBodyweightSection());
+
     if (items.length === 0) {
+      wrap.appendChild(el("div", "section-label", "TRAINING"));
       wrap.appendChild(el("div", "empty-msg", "No sessions logged yet. Log a set on any split to start building your history."));
       return wrap;
     }
+
+    wrap.appendChild(el("div", "section-label", "TRAINING"));
 
     const uniqueDates = [...new Set(items.map((i) => i.date))];
     const totalVolAll = items.reduce((s, i) => s + i.volume, 0);
@@ -1359,6 +1413,119 @@
     wrap.appendChild(el("div", "section-label", "RECENT ACTIVITY"));
     wrap.appendChild(buildRecentActivity(items));
 
+    return wrap;
+  }
+
+  function buildBodyweightSection() {
+    const wrap = el("div", "bw-wrap");
+
+    const formCard = el("div", "settings-card");
+    formCard.style.marginBottom = "14px";
+    const formRow = el("div", "bw-form-row");
+    const dateInput = el("input", "editor-field bw-date-input");
+    dateInput.type = "date";
+    dateInput.value = todayISO();
+    formRow.appendChild(dateInput);
+    const weightInput = el("input", "editor-field bw-weight-input");
+    weightInput.type = "number";
+    weightInput.step = "0.1";
+    weightInput.placeholder = "kg";
+    formRow.appendChild(weightInput);
+    const logBtn = el("button", "settings-btn bw-log-btn", "Log");
+    logBtn.addEventListener("click", () => {
+      const w = parseFloat(weightInput.value);
+      if (!dateInput.value || !w || w <= 0) { toast("Enter a date and weight"); return; }
+      bodyweightEntries = bodyweightEntries.filter((e) => e.date !== dateInput.value);
+      bodyweightEntries.push({ id: uid(), date: dateInput.value, weight: w });
+      bodyweightEntries.sort((a, b) => (a.date < b.date ? 1 : -1));
+      saveBodyweight();
+      renderMainView();
+      toast("Logged");
+    });
+    formRow.appendChild(logBtn);
+    formCard.appendChild(formRow);
+    wrap.appendChild(formCard);
+
+    if (bodyweightEntries.length === 0) {
+      wrap.appendChild(el("div", "empty-msg", "No bodyweight logged yet."));
+      return wrap;
+    }
+
+    const sorted = [...bodyweightEntries].sort((a, b) => (a.date < b.date ? -1 : 1));
+    const latest = sorted[sorted.length - 1];
+    const summaryGrid = el("div", "stat-grid");
+    summaryGrid.style.gridTemplateColumns = sorted.length > 1 ? "repeat(2, 1fr)" : "1fr";
+    const latestBox = el("div", "stat-box");
+    latestBox.appendChild(el("div", "stat-value", `${latest.weight}kg`));
+    latestBox.appendChild(el("div", "stat-label", `Latest (${formatDateShort(latest.date)})`));
+    summaryGrid.appendChild(latestBox);
+    if (sorted.length > 1) {
+      const first = sorted[0];
+      const change = latest.weight - first.weight;
+      const changeBox = el("div", "stat-box");
+      changeBox.appendChild(el("div", "stat-value", `${change >= 0 ? "+" : ""}${change.toFixed(1)}kg`));
+      changeBox.appendChild(el("div", "stat-label", `Since ${formatDateShort(first.date)}`));
+      summaryGrid.appendChild(changeBox);
+    }
+    wrap.appendChild(summaryGrid);
+
+    if (sorted.length > 1) {
+      wrap.appendChild(buildBodyweightChart(sorted));
+    }
+
+    const list = el("div", "bw-list");
+    [...sorted].reverse().slice(0, 10).forEach((entry) => {
+      const item = el("div", "feedback-item");
+      const head = el("div", "feedback-item-head");
+      head.appendChild(el("span", "feedback-item-date", formatDateShort(entry.date)));
+      const delBtn = el("button", "editor-icon-btn danger", "×");
+      delBtn.addEventListener("click", () => {
+        bodyweightEntries = bodyweightEntries.filter((e) => e.id !== entry.id);
+        saveBodyweight();
+        renderMainView();
+      });
+      head.appendChild(delBtn);
+      item.appendChild(head);
+      item.appendChild(el("div", "feedback-item-text", `${entry.weight}kg`));
+      list.appendChild(item);
+    });
+    wrap.appendChild(list);
+
+    return wrap;
+  }
+
+  function buildBodyweightChart(sorted) {
+    const wrap = el("div", "chart-wrap");
+    const width = 440;
+    const height = 120;
+    const padX = 16;
+    const padY = 14;
+
+    const weights = sorted.map((e) => e.weight);
+    const min = Math.min(...weights);
+    const max = Math.max(...weights);
+    const range = max - min || 1;
+
+    const stepX = sorted.length > 1 ? (width - padX * 2) / (sorted.length - 1) : 0;
+    const coords = sorted.map((e, i) => {
+      const x = padX + i * stepX;
+      const y = height - padY - ((e.weight - min) / range) * (height - padY * 2);
+      return { x, y };
+    });
+
+    const polyline = coords.map((c) => `${c.x},${c.y}`).join(" ");
+    const dots = coords.map((c) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="#f97316" />`).join("");
+    const firstLabel = formatDateShort(sorted[0].date);
+    const lastLabel = formatDateShort(sorted[sorted.length - 1].date);
+
+    wrap.innerHTML = `
+      <svg viewBox="0 0 ${width} ${height + 18}" width="100%" height="auto" preserveAspectRatio="xMidYMid meet">
+        <polyline points="${polyline}" fill="none" stroke="#f97316" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+        ${dots}
+        <text x="${padX}" y="${height + 14}" fill="#9aa0ab" font-size="11">${firstLabel}</text>
+        <text x="${width - padX}" y="${height + 14}" fill="#9aa0ab" font-size="11" text-anchor="end">${lastLabel}</text>
+      </svg>
+    `;
     return wrap;
   }
 
@@ -1483,6 +1650,129 @@
     return wrap;
   }
 
+  // ---------- Backup / restore ----------
+
+  function buildBackupBundle() {
+    return {
+      app: "SHFTRS",
+      exportVersion: 1,
+      exportedAt: todayISO(),
+      program,
+      library,
+      allData,
+      feedback: feedbackEntries,
+      bodyweight: bodyweightEntries,
+    };
+  }
+
+  function mergeImportedBundle(bundle) {
+    const summary = { sessions: 0, exercises: 0, splits: 0, feedback: 0, bodyweight: 0 };
+    if (!bundle || typeof bundle !== "object") return summary;
+
+    // Backward compatibility: earlier exports were just the raw allData object.
+    const isLegacyRaw = !bundle.app && !bundle.allData && !bundle.program;
+    const importedProgram = isLegacyRaw ? null : bundle.program;
+    const importedLibrary = isLegacyRaw ? null : bundle.library;
+    const importedAllData = isLegacyRaw ? bundle : bundle.allData;
+    const importedFeedback = isLegacyRaw ? null : bundle.feedback;
+    const importedBodyweight = isLegacyRaw ? null : bundle.bodyweight;
+
+    if (Array.isArray(importedLibrary)) {
+      importedLibrary.forEach((ex) => {
+        if (ex && ex.id && !library.some((e) => e.id === ex.id)) {
+          library.push(ex);
+          summary.exercises++;
+        }
+      });
+      saveLibrary();
+    }
+
+    if (importedProgram && Array.isArray(importedProgram.splits)) {
+      importedProgram.splits.forEach((impSplit) => {
+        const existing = program.splits.find((s) => s.id === impSplit.id);
+        if (!existing) {
+          program.splits.push(impSplit);
+          summary.splits++;
+        } else {
+          (impSplit.exercises || []).forEach((impEx) => {
+            if (!existing.exercises.some((e) => e.id === impEx.id)) existing.exercises.push(impEx);
+          });
+          (impSplit.addons || []).forEach((a) => {
+            if (!existing.addons.includes(a)) existing.addons.push(a);
+          });
+        }
+      });
+      if (Array.isArray(importedProgram.templates)) {
+        importedProgram.templates.forEach((t) => {
+          if (t && t.id && !program.templates.some((x) => x.id === t.id)) program.templates.push(t);
+        });
+      }
+      saveProgram();
+    }
+
+    if (importedAllData && typeof importedAllData === "object") {
+      if (typeof importedAllData._totalWeeks === "number") {
+        allData._totalWeeks = Math.max(allData._totalWeeks || 1, importedAllData._totalWeeks);
+      }
+      if (importedAllData._deloadWeeks) {
+        allData._deloadWeeks = { ...importedAllData._deloadWeeks, ...(allData._deloadWeeks || {}) };
+      }
+      Object.keys(importedAllData).forEach((splitId) => {
+        if (splitId.startsWith("_")) return;
+        const impSplitData = importedAllData[splitId];
+        if (!allData[splitId]) allData[splitId] = {};
+        Object.keys(impSplitData).forEach((weekKey) => {
+          if (weekKey.startsWith("_")) return;
+          const impWeekData = impSplitData[weekKey];
+          if (!allData[splitId][weekKey]) allData[splitId][weekKey] = {};
+          const curWeekData = allData[splitId][weekKey];
+          Object.keys(impWeekData).forEach((exKey) => {
+            if (exKey === "_sessionNote") {
+              if (!curWeekData._sessionNote) curWeekData._sessionNote = impWeekData._sessionNote;
+              return;
+            }
+            if (exKey === "_adhoc") {
+              if (!curWeekData._adhoc) curWeekData._adhoc = [];
+              impWeekData._adhoc.forEach((a) => {
+                if (!curWeekData._adhoc.some((x) => x.id === a.id)) curWeekData._adhoc.push(a);
+              });
+              return;
+            }
+            if (exKey === "_order") return;
+            if (!curWeekData[exKey]) {
+              curWeekData[exKey] = impWeekData[exKey];
+              summary.sessions++;
+            }
+          });
+        });
+      });
+      saveData();
+    }
+
+    if (Array.isArray(importedFeedback)) {
+      importedFeedback.forEach((f) => {
+        if (f && f.id && !feedbackEntries.some((e) => e.id === f.id)) {
+          feedbackEntries.push(f);
+          summary.feedback++;
+        }
+      });
+      saveFeedback();
+    }
+
+    if (Array.isArray(importedBodyweight)) {
+      importedBodyweight.forEach((bw) => {
+        if (bw && !bodyweightEntries.some((e) => e.id === bw.id || e.date === bw.date)) {
+          bodyweightEntries.push(bw);
+          summary.bodyweight++;
+        }
+      });
+      bodyweightEntries.sort((a, b) => (a.date < b.date ? 1 : -1));
+      saveBodyweight();
+    }
+
+    return summary;
+  }
+
   // ---------- Settings view ----------
 
   function buildSettingsView() {
@@ -1498,23 +1788,53 @@
     programCard.appendChild(modifyBtn);
     wrap.appendChild(programCard);
 
-    wrap.appendChild(el("div", "section-label", "DATA"));
+    wrap.appendChild(el("div", "section-label", "BACKUP & RESTORE"));
     const card = el("div", "settings-card");
-    card.appendChild(el("div", "settings-card-title", "Export data"));
-    card.appendChild(el("div", "settings-card-desc", "Downloads all logged sessions as a JSON file. Use to back up or move your data."));
-    const btn = el("button", "settings-btn", "↓  Export training-data.json");
+    card.style.marginBottom = "10px";
+    card.appendChild(el("div", "settings-card-title", "Export backup"));
+    card.appendChild(el("div", "settings-card-desc", "Downloads everything - splits, exercise library, logged history, feedback, and bodyweight - as one file. Use to back up or move your data."));
+    const btn = el("button", "settings-btn", "↓  Export shftrs-backup.json");
     btn.addEventListener("click", () => {
-      const json = JSON.stringify(allData, null, 2);
+      const json = JSON.stringify(buildBackupBundle(), null, 2);
       const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `training-data-${todayISO()}.json`;
+      a.download = `shftrs-backup-${todayISO()}.json`;
       a.click();
       URL.revokeObjectURL(url);
     });
     card.appendChild(btn);
     wrap.appendChild(card);
+
+    const importCard = el("div", "settings-card");
+    importCard.appendChild(el("div", "settings-card-title", "Import backup"));
+    importCard.appendChild(el("div", "settings-card-desc", "Restores from a previously exported file. Merges with what's already here - nothing already on this device gets overwritten."));
+    const importLabel = el("label", "settings-btn import-btn", "↑  Choose backup file…");
+    const importInput = document.createElement("input");
+    importInput.type = "file";
+    importInput.accept = "application/json";
+    importInput.className = "import-file-input";
+    importInput.addEventListener("change", () => {
+      const file = importInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const bundle = JSON.parse(reader.result);
+          const summary = mergeImportedBundle(bundle);
+          renderTabBar(); renderWeekBar(); renderWeekPicker(); renderMainView();
+          toast(`Imported: ${summary.sessions} sessions, ${summary.exercises} exercises, ${summary.bodyweight} bodyweight, ${summary.feedback} feedback`);
+        } catch {
+          toast("Couldn't read that file");
+        }
+        importInput.value = "";
+      };
+      reader.readAsText(file);
+    });
+    importLabel.appendChild(importInput);
+    importCard.appendChild(importLabel);
+    wrap.appendChild(importCard);
 
     wrap.appendChild(el("div", "section-label", "FEEDBACK"));
     const feedbackCard = el("div", "settings-card");
