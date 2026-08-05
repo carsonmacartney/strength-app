@@ -770,6 +770,31 @@ button, input, textarea { font-family: inherit; }
 }
 .settings-card-title { color: #aaa; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 .settings-card-desc { color: var(--text-faint); font-size: 12px; margin-bottom: 14px; }
+
+.settings-folder {
+  border-bottom: 1px solid var(--surface-2);
+}
+.settings-folder:first-child { border-top: 1px solid var(--surface-2); }
+.settings-folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 4px;
+  cursor: pointer;
+}
+.settings-folder-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #eee;
+}
+.settings-folder-chevron {
+  color: var(--text-faintest);
+  font-size: 14px;
+}
+.settings-folder-chevron.open { color: var(--accent); }
+.settings-folder-body {
+  padding-bottom: 18px;
+}
 .settings-btn {
   width: 100%;
   padding: 13px;
@@ -859,39 +884,6 @@ button, input, textarea { font-family: inherit; }
 .heatmap-cell[data-level="1"] { background: #7c3d0f; }
 .heatmap-cell[data-level="2"] { background: #c2540f; }
 .heatmap-cell[data-level="3"] { background: var(--accent); }
-
-.split-volume-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.split-volume-label {
-  width: 90px;
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: #ccc;
-}
-.split-volume-bar-track {
-  flex: 1;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.split-volume-bar-fill {
-  height: 100%;
-  border-radius: 4px;
-}
-.split-volume-value {
-  width: 60px;
-  flex-shrink: 0;
-  text-align: right;
-  font-size: 12px;
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
 
 .activity-item {
   display: flex;
@@ -1103,6 +1095,42 @@ button, input, textarea { font-family: inherit; }
 }
 .save-template-row .editor-field { flex: 1; }
 
+/* Stats week toggle */
+.stats-week-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.stats-week-head-row .section-label { margin-bottom: 0; }
+.stats-week-toggle-wrap {
+  position: relative;
+}
+.stats-week-toggle-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.stats-week-picker-grid {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 200px;
+  background: #111;
+  border: 1px solid var(--surface-2);
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
 /* Muscle group stats */
 .muscle-row {
   display: flex;
@@ -1165,34 +1193,30 @@ button, input, textarea { font-family: inherit; }
   margin-bottom: 14px;
 }
 
-/* Feedback list */
-.feedback-list {
-  margin-top: 14px;
-}
-.feedback-item {
+/* Bodyweight list */
+.bw-item {
   background: var(--surface);
   border: 1px solid var(--surface-2);
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 8px;
 }
-.feedback-item-head {
+.bw-item-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 4px;
 }
-.feedback-item-date {
+.bw-item-date {
   color: var(--text-faint);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.feedback-item-text {
+.bw-item-text {
   color: #ccc;
   font-size: 13px;
-  white-space: pre-wrap;
 }
 
 /* Settings footer logo */

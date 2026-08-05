@@ -5,7 +5,6 @@
 
   const PROGRAM_STORAGE_KEY = "bigLiftin_program_v1";
   const DATA_STORAGE_KEY = "bigLiftin_v1";
-  const FEEDBACK_STORAGE_KEY = "shftrs_feedback_v1";
   const UI_STATE_STORAGE_KEY = "shftrs_ui_state_v1";
   const LIBRARY_STORAGE_KEY = "shftrs_library_v1";
   const BODYWEIGHT_STORAGE_KEY = "shftrs_bodyweight_v1";
@@ -107,19 +106,6 @@
     try { localStorage.setItem(DATA_STORAGE_KEY, JSON.stringify(allData)); } catch {}
   }
 
-  function loadFeedback() {
-    try {
-      const raw = localStorage.getItem(FEEDBACK_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  function saveFeedback() {
-    try { localStorage.setItem(FEEDBACK_STORAGE_KEY, JSON.stringify(feedbackEntries)); } catch {}
-  }
-
   function loadUiState() {
     try {
       const raw = localStorage.getItem(UI_STATE_STORAGE_KEY);
@@ -164,11 +150,12 @@
   // Superseded by the split/week model; drop the old freeform-logging data.
   localStorage.removeItem("strength_exercises");
   localStorage.removeItem("strength_sessions");
+  // Feedback feature removed - not used, drop any leftover data.
+  localStorage.removeItem("shftrs_feedback_v1");
 
   let program = loadProgram();
   let allData = loadData();
   if (!allData._totalWeeks) allData._totalWeeks = DEFAULT_TOTAL_WEEKS;
-  let feedbackEntries = loadFeedback();
   let library = loadLibrary();
   let bodyweightEntries = loadBodyweight();
 
@@ -373,8 +360,19 @@
     return new Date(y, m - 1, d);
   }
 
+  const MONTH_SHORT_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
   function formatDateShort(iso) {
-    return parseISO(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const d = parseISO(iso);
+    return `${d.getDate()} ${MONTH_SHORT_NAMES[d.getMonth()]}`;
+  }
+
+  function formatDateNumeric(iso) {
+    const d = parseISO(iso);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${dd}/${mm}/${yy}`;
   }
 
   function currentWeekStartISO() {
@@ -449,6 +447,7 @@
         flushOpenCards();
         state.activeDay = dk;
         state.showWeekPicker = false;
+        if (dk === "Stats") { statsWeekView = null; statsWeekPickerOpen = false; }
         saveUiState();
         renderTabBar();
         renderWeekBar();
@@ -1385,11 +1384,17 @@
     statGrid.appendChild(box1); statGrid.appendChild(box2); statGrid.appendChild(box3);
     wrap.appendChild(statGrid);
 
-    const trainingWeekKey = weekLabel(state.activeWeek);
+    if (statsWeekView === null) statsWeekView = state.activeWeek;
+    const weekToShow = statsWeekView;
+    const trainingWeekKey = weekLabel(weekToShow);
     const calendarWeekVol = items.filter((i) => i.date >= weekStartISO).reduce((s, i) => s + i.volume, 0);
     const trainingWeekVol = items.filter((i) => i.weekKey === trainingWeekKey).reduce((s, i) => s + i.volume, 0);
 
-    wrap.appendChild(el("div", "section-label", "WEEKLY VOLUME"));
+    const weekHeadRow = el("div", "stats-week-head-row");
+    weekHeadRow.appendChild(el("div", "section-label", "WEEKLY VOLUME"));
+    weekHeadRow.appendChild(buildStatsWeekToggle(weekToShow));
+    wrap.appendChild(weekHeadRow);
+
     const weekVolGrid = el("div", "stat-grid");
     weekVolGrid.style.gridTemplateColumns = "repeat(2, 1fr)";
     const wbox1 = el("div", "stat-box");
@@ -1404,15 +1409,43 @@
     wrap.appendChild(el("div", "section-label", "ADHERENCE"));
     wrap.appendChild(buildHeatmap(items));
 
-    wrap.appendChild(el("div", "section-label", "MUSCLE GROUPS THIS WEEK"));
-    wrap.appendChild(buildMuscleGroupSection(items, weekStartISO));
-
-    wrap.appendChild(el("div", "section-label", "VOLUME BY SPLIT"));
-    wrap.appendChild(buildSplitVolumeBreakdown(items, totalVolAll));
+    wrap.appendChild(el("div", "section-label", `MUSCLE GROUPS · ${trainingWeekKey}`));
+    wrap.appendChild(buildMuscleGroupSection(items, trainingWeekKey));
 
     wrap.appendChild(el("div", "section-label", "RECENT ACTIVITY"));
     wrap.appendChild(buildRecentActivity(items));
 
+    return wrap;
+  }
+
+  let statsWeekView = null;
+  let statsWeekPickerOpen = false;
+
+  function buildStatsWeekToggle(weekToShow) {
+    const wrap = el("div", "stats-week-toggle-wrap");
+    const btn = el("button", "stats-week-toggle-btn", `Week ${weekToShow} ▾`);
+    btn.addEventListener("click", () => {
+      statsWeekPickerOpen = !statsWeekPickerOpen;
+      renderMainView();
+    });
+    wrap.appendChild(btn);
+
+    if (statsWeekPickerOpen) {
+      const totalWeeks = allData._totalWeeks || DEFAULT_TOTAL_WEEKS;
+      const grid = el("div", "stats-week-picker-grid");
+      for (let w = 1; w <= totalWeeks; w++) {
+        const isActive = w === weekToShow;
+        const pill = el("button", "week-btn" + (isActive ? " active" : ""), `W${w}`);
+        if (isActive) pill.style.background = "var(--accent)";
+        pill.addEventListener("click", () => {
+          statsWeekView = w;
+          statsWeekPickerOpen = false;
+          renderMainView();
+        });
+        grid.appendChild(pill);
+      }
+      wrap.appendChild(grid);
+    }
     return wrap;
   }
 
@@ -1457,14 +1490,14 @@
     summaryGrid.style.gridTemplateColumns = sorted.length > 1 ? "repeat(2, 1fr)" : "1fr";
     const latestBox = el("div", "stat-box");
     latestBox.appendChild(el("div", "stat-value", `${latest.weight}kg`));
-    latestBox.appendChild(el("div", "stat-label", `Latest (${formatDateShort(latest.date)})`));
+    latestBox.appendChild(el("div", "stat-label", `Latest (${formatDateNumeric(latest.date)})`));
     summaryGrid.appendChild(latestBox);
     if (sorted.length > 1) {
       const first = sorted[0];
       const change = latest.weight - first.weight;
       const changeBox = el("div", "stat-box");
       changeBox.appendChild(el("div", "stat-value", `${change >= 0 ? "+" : ""}${change.toFixed(1)}kg`));
-      changeBox.appendChild(el("div", "stat-label", `Since ${formatDateShort(first.date)}`));
+      changeBox.appendChild(el("div", "stat-label", `Since ${formatDateNumeric(first.date)}`));
       summaryGrid.appendChild(changeBox);
     }
     wrap.appendChild(summaryGrid);
@@ -1475,9 +1508,9 @@
 
     const list = el("div", "bw-list");
     [...sorted].reverse().slice(0, 10).forEach((entry) => {
-      const item = el("div", "feedback-item");
-      const head = el("div", "feedback-item-head");
-      head.appendChild(el("span", "feedback-item-date", formatDateShort(entry.date)));
+      const item = el("div", "bw-item");
+      const head = el("div", "bw-item-head");
+      head.appendChild(el("span", "bw-item-date", formatDateNumeric(entry.date)));
       const delBtn = el("button", "editor-icon-btn danger", "×");
       delBtn.addEventListener("click", () => {
         bodyweightEntries = bodyweightEntries.filter((e) => e.id !== entry.id);
@@ -1486,7 +1519,7 @@
       });
       head.appendChild(delBtn);
       item.appendChild(head);
-      item.appendChild(el("div", "feedback-item-text", `${entry.weight}kg`));
+      item.appendChild(el("div", "bw-item-text", `${entry.weight}kg`));
       list.appendChild(item);
     });
     wrap.appendChild(list);
@@ -1515,8 +1548,8 @@
 
     const polyline = coords.map((c) => `${c.x},${c.y}`).join(" ");
     const dots = coords.map((c) => `<circle cx="${c.x}" cy="${c.y}" r="3" fill="#f97316" />`).join("");
-    const firstLabel = formatDateShort(sorted[0].date);
-    const lastLabel = formatDateShort(sorted[sorted.length - 1].date);
+    const firstLabel = formatDateNumeric(sorted[0].date);
+    const lastLabel = formatDateNumeric(sorted[sorted.length - 1].date);
 
     wrap.innerHTML = `
       <svg viewBox="0 0 ${width} ${height + 18}" width="100%" height="auto" preserveAspectRatio="xMidYMid meet">
@@ -1572,12 +1605,12 @@
     return container;
   }
 
-  function buildMuscleGroupSection(items, weekStartISO) {
+  function buildMuscleGroupSection(items, trainingWeekKey) {
     const wrap = el("div");
-    const thisWeekItems = items.filter((i) => i.date >= weekStartISO);
+    const thisWeekItems = items.filter((i) => i.weekKey === trainingWeekKey);
 
     if (thisWeekItems.length === 0) {
-      wrap.appendChild(el("div", "empty-msg", "No sets logged yet this week."));
+      wrap.appendChild(el("div", "empty-msg", "No sets logged for this week."));
       return wrap;
     }
 
@@ -1598,32 +1631,6 @@
       wrap.appendChild(row);
     });
 
-    return wrap;
-  }
-
-  function buildSplitVolumeBreakdown(items, totalVolAll) {
-    const wrap = el("div");
-    const byDay = {};
-    const nameById = {};
-    items.forEach((i) => {
-      byDay[i.splitId] = (byDay[i.splitId] || 0) + i.volume;
-      nameById[i.splitId] = i.splitName;
-    });
-
-    Object.keys(byDay).sort((a, b) => byDay[b] - byDay[a]).forEach((splitId) => {
-      const vol = byDay[splitId];
-      const pct = totalVolAll > 0 ? (vol / totalVolAll) * 100 : 0;
-      const row = el("div", "split-volume-row");
-      row.appendChild(el("div", "split-volume-label", nameById[splitId]));
-      const track = el("div", "split-volume-bar-track");
-      const fill = el("div", "split-volume-bar-fill");
-      fill.style.width = `${pct}%`;
-      fill.style.background = accentFor(splitId);
-      track.appendChild(fill);
-      row.appendChild(track);
-      row.appendChild(el("div", "split-volume-value", vol >= 1000 ? `${(vol / 1000).toFixed(1)}k` : vol.toFixed(0)));
-      wrap.appendChild(row);
-    });
     return wrap;
   }
 
@@ -1660,13 +1667,12 @@
       program,
       library,
       allData,
-      feedback: feedbackEntries,
       bodyweight: bodyweightEntries,
     };
   }
 
   function mergeImportedBundle(bundle) {
-    const summary = { sessions: 0, exercises: 0, splits: 0, feedback: 0, bodyweight: 0 };
+    const summary = { sessions: 0, exercises: 0, splits: 0, bodyweight: 0 };
     if (!bundle || typeof bundle !== "object") return summary;
 
     // Backward compatibility: earlier exports were just the raw allData object.
@@ -1674,7 +1680,6 @@
     const importedProgram = isLegacyRaw ? null : bundle.program;
     const importedLibrary = isLegacyRaw ? null : bundle.library;
     const importedAllData = isLegacyRaw ? bundle : bundle.allData;
-    const importedFeedback = isLegacyRaw ? null : bundle.feedback;
     const importedBodyweight = isLegacyRaw ? null : bundle.bodyweight;
 
     if (Array.isArray(importedLibrary)) {
@@ -1749,16 +1754,6 @@
       saveData();
     }
 
-    if (Array.isArray(importedFeedback)) {
-      importedFeedback.forEach((f) => {
-        if (f && f.id && !feedbackEntries.some((e) => e.id === f.id)) {
-          feedbackEntries.push(f);
-          summary.feedback++;
-        }
-      });
-      saveFeedback();
-    }
-
     if (Array.isArray(importedBodyweight)) {
       importedBodyweight.forEach((bw) => {
         if (bw && !bodyweightEntries.some((e) => e.id === bw.id || e.date === bw.date)) {
@@ -1775,120 +1770,91 @@
 
   // ---------- Settings view ----------
 
+  const expandedSettingsFolders = new Set();
+
+  function buildSettingsFolder(id, title, buildContent) {
+    const folder = el("div", "settings-folder");
+    const expanded = expandedSettingsFolders.has(id);
+
+    const header = el("div", "settings-folder-header");
+    header.appendChild(el("span", "settings-folder-title", title));
+    header.appendChild(el("span", "settings-folder-chevron" + (expanded ? " open" : ""), expanded ? "▲" : "▼"));
+    header.addEventListener("click", () => {
+      if (expanded) expandedSettingsFolders.delete(id); else expandedSettingsFolders.add(id);
+      renderMainView();
+    });
+    folder.appendChild(header);
+
+    if (expanded) {
+      const body = el("div", "settings-folder-body");
+      buildContent(body);
+      folder.appendChild(body);
+    }
+
+    return folder;
+  }
+
   function buildSettingsView() {
     const wrap = el("div", "view-pad");
 
-    wrap.appendChild(el("div", "section-label", "PROGRAM"));
-    const programCard = el("div", "settings-card");
-    programCard.style.marginBottom = "20px";
-    programCard.appendChild(el("div", "settings-card-title", "Modify Splits"));
-    programCard.appendChild(el("div", "settings-card-desc", "Rename splits, add or remove exercises, tag muscle groups, and save/load program templates."));
-    const modifyBtn = el("button", "settings-btn", "Modify Splits →");
-    modifyBtn.addEventListener("click", openSplitsEditor);
-    programCard.appendChild(modifyBtn);
-    wrap.appendChild(programCard);
+    wrap.appendChild(buildSettingsFolder("program", "Program", (body) => {
+      const programCard = el("div", "settings-card");
+      programCard.appendChild(el("div", "settings-card-title", "Modify Splits"));
+      programCard.appendChild(el("div", "settings-card-desc", "Rename splits, add or remove exercises, tag muscle groups, and save/load program templates."));
+      const modifyBtn = el("button", "settings-btn", "Modify Splits →");
+      modifyBtn.addEventListener("click", openSplitsEditor);
+      programCard.appendChild(modifyBtn);
+      body.appendChild(programCard);
+    }));
 
-    wrap.appendChild(el("div", "section-label", "BACKUP & RESTORE"));
-    const card = el("div", "settings-card");
-    card.style.marginBottom = "10px";
-    card.appendChild(el("div", "settings-card-title", "Export backup"));
-    card.appendChild(el("div", "settings-card-desc", "Downloads everything - splits, exercise library, logged history, feedback, and bodyweight - as one file. Use to back up or move your data."));
-    const btn = el("button", "settings-btn", "↓  Export shftrs-backup.json");
-    btn.addEventListener("click", () => {
-      const json = JSON.stringify(buildBackupBundle(), null, 2);
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `shftrs-backup-${todayISO()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
-    card.appendChild(btn);
-    wrap.appendChild(card);
-
-    const importCard = el("div", "settings-card");
-    importCard.appendChild(el("div", "settings-card-title", "Import backup"));
-    importCard.appendChild(el("div", "settings-card-desc", "Restores from a previously exported file. Merges with what's already here - nothing already on this device gets overwritten."));
-    const importLabel = el("label", "settings-btn import-btn", "↑  Choose backup file…");
-    const importInput = document.createElement("input");
-    importInput.type = "file";
-    importInput.accept = "application/json";
-    importInput.className = "import-file-input";
-    importInput.addEventListener("change", () => {
-      const file = importInput.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const bundle = JSON.parse(reader.result);
-          const summary = mergeImportedBundle(bundle);
-          renderTabBar(); renderWeekBar(); renderWeekPicker(); renderMainView();
-          toast(`Imported: ${summary.sessions} sessions, ${summary.exercises} exercises, ${summary.bodyweight} bodyweight, ${summary.feedback} feedback`);
-        } catch {
-          toast("Couldn't read that file");
-        }
-        importInput.value = "";
-      };
-      reader.readAsText(file);
-    });
-    importLabel.appendChild(importInput);
-    importCard.appendChild(importLabel);
-    wrap.appendChild(importCard);
-
-    wrap.appendChild(el("div", "section-label", "FEEDBACK"));
-    const feedbackCard = el("div", "settings-card");
-    feedbackCard.appendChild(el("div", "settings-card-title", "Send feedback"));
-    feedbackCard.appendChild(el("div", "settings-card-desc", "Notes save on this phone. Export them whenever you want to hand them off."));
-    const feedbackInput = el("textarea", "notes-textarea");
-    feedbackInput.placeholder = "What's clunky? What's missing? Anything at all...";
-    feedbackInput.rows = 3;
-    feedbackCard.appendChild(feedbackInput);
-    const addFeedbackBtn = el("button", "settings-btn", "+ Add note");
-    addFeedbackBtn.addEventListener("click", () => {
-      const text = feedbackInput.value.trim();
-      if (!text) { toast("Write something first"); return; }
-      feedbackEntries.unshift({ id: uid(), date: todayISO(), text });
-      saveFeedback();
-      renderMainView();
-      toast("Saved");
-    });
-    feedbackCard.appendChild(addFeedbackBtn);
-    wrap.appendChild(feedbackCard);
-
-    if (feedbackEntries.length > 0) {
-      const exportFeedbackBtn = el("button", "settings-btn", "↓  Export feedback.txt");
-      exportFeedbackBtn.style.marginTop = "10px";
-      exportFeedbackBtn.addEventListener("click", () => {
-        const text = feedbackEntries.map((f) => `${f.date}\n${f.text}`).join("\n\n---\n\n");
-        const blob = new Blob([text], { type: "text/plain" });
+    wrap.appendChild(buildSettingsFolder("backup", "Backup & Restore", (body) => {
+      const card = el("div", "settings-card");
+      card.style.marginBottom = "10px";
+      card.appendChild(el("div", "settings-card-title", "Export backup"));
+      card.appendChild(el("div", "settings-card-desc", "Downloads everything - splits, exercise library, logged history, and bodyweight - as one file. Use to back up or move your data."));
+      const btn = el("button", "settings-btn", "↓  Export shftrs-backup.json");
+      btn.addEventListener("click", () => {
+        const json = JSON.stringify(buildBackupBundle(), null, 2);
+        const blob = new Blob([json], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `shftrs-feedback-${todayISO()}.txt`;
+        a.download = `shftrs-backup-${todayISO()}.json`;
         a.click();
         URL.revokeObjectURL(url);
       });
-      wrap.appendChild(exportFeedbackBtn);
+      card.appendChild(btn);
+      body.appendChild(card);
 
-      const feedbackList = el("div", "feedback-list");
-      feedbackEntries.forEach((f) => {
-        const item = el("div", "feedback-item");
-        const head = el("div", "feedback-item-head");
-        head.appendChild(el("span", "feedback-item-date", formatDateShort(f.date)));
-        const delBtn = el("button", "editor-icon-btn danger", "×");
-        delBtn.addEventListener("click", () => {
-          feedbackEntries = feedbackEntries.filter((x) => x.id !== f.id);
-          saveFeedback();
-          renderMainView();
-        });
-        head.appendChild(delBtn);
-        item.appendChild(head);
-        item.appendChild(el("div", "feedback-item-text", f.text));
-        feedbackList.appendChild(item);
+      const importCard = el("div", "settings-card");
+      importCard.appendChild(el("div", "settings-card-title", "Import backup"));
+      importCard.appendChild(el("div", "settings-card-desc", "Restores from a previously exported file. Merges with what's already here - nothing already on this device gets overwritten."));
+      const importLabel = el("label", "settings-btn import-btn", "↑  Choose backup file…");
+      const importInput = document.createElement("input");
+      importInput.type = "file";
+      importInput.accept = "application/json";
+      importInput.className = "import-file-input";
+      importInput.addEventListener("change", () => {
+        const file = importInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const bundle = JSON.parse(reader.result);
+            const summary = mergeImportedBundle(bundle);
+            renderTabBar(); renderWeekBar(); renderWeekPicker(); renderMainView();
+            toast(`Imported: ${summary.sessions} sessions, ${summary.exercises} exercises, ${summary.bodyweight} bodyweight`);
+          } catch {
+            toast("Couldn't read that file");
+          }
+          importInput.value = "";
+        };
+        reader.readAsText(file);
       });
-      wrap.appendChild(feedbackList);
-    }
+      importLabel.appendChild(importInput);
+      importCard.appendChild(importLabel);
+      body.appendChild(importCard);
+    }));
 
     const logoWrap = el("div", "settings-logo-wrap");
     const logo = document.createElement("img");
