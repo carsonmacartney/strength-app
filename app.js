@@ -970,18 +970,23 @@
       if (wn <= 1) return null;
       const prevKey = weekLabel(wn - 1);
       const relevantSplits = splitsUsingExercise(exDef.id);
-      let combinedSets = [];
-      const notes = [];
+      const groups = [];
       relevantSplits.forEach((sId) => {
         const d = allData[sId] && allData[sId][prevKey] && allData[sId][prevKey][exDef.id];
         if (d && d.sets && d.sets.length > 0) {
-          combinedSets = combinedSets.concat(d.sets);
-          if (d.note) notes.push(d.note);
+          const s = findSplit(sId);
+          groups.push({ splitColor: accentFor(sId), splitName: s ? s.name : sId, sets: d.sets, note: d.note });
         }
       });
-      if (combinedSets.length === 0) return null;
+      if (groups.length === 0) return null;
+      const combinedSets = groups.flatMap((g) => g.sets);
       const working = workingSets(combinedSets);
-      return { data: { sets: combinedSets, note: notes.join(" · ") }, best: working.length ? bestSet(working) : null };
+      return {
+        groups,
+        multiSplit: groups.length > 1,
+        totalSetCount: combinedSets.length,
+        best: working.length ? bestSet(working) : null,
+      };
     }
 
     function computeIsPR(currentSets) {
@@ -1040,8 +1045,21 @@
 
       const prev = computePrevBest();
       if (prev && prev.best && !open) {
-        const line = `Last: ${prev.best.weight}kg × ${prev.best.reps}` + (prev.data.sets.length > 1 ? ` (${prev.data.sets.length} sets)` : "");
-        left.appendChild(el("div", "exercise-last-week", line));
+        const lineWrap = el("div", "exercise-last-week");
+        lineWrap.appendChild(el("span", null, `Last: ${prev.best.weight}kg × ${prev.best.reps}`));
+        if (prev.multiSplit) {
+          const dotsWrap = el("span", "last-week-dots");
+          prev.groups.forEach((g) => {
+            const dot = el("span", "last-week-split-dot");
+            dot.style.background = g.splitColor;
+            dotsWrap.appendChild(dot);
+          });
+          lineWrap.appendChild(dotsWrap);
+        }
+        if (prev.totalSetCount > 1) {
+          lineWrap.appendChild(el("span", null, `(${prev.totalSetCount} sets)`));
+        }
+        left.appendChild(lineWrap);
       }
       top.appendChild(left);
 
@@ -1070,11 +1088,23 @@
         const box = el("div", "last-week-box");
         box.style.borderLeftColor = accent;
         box.appendChild(el("div", "last-week-box-title", "LAST WEEK"));
-        prev.data.sets.forEach((st) => {
-          const text = `${st.weight}kg × ${st.reps}` + (st.rpe ? ` @${st.rpe}` : "") + (st.warmup ? " (w)" : "");
-          box.appendChild(el("span", "last-week-box-set" + (st.warmup ? " warmup" : ""), text));
+        prev.groups.forEach((g) => {
+          if (prev.multiSplit) {
+            const subHead = el("div", "last-week-split-head");
+            const dot = el("span", "last-week-split-dot");
+            dot.style.background = g.splitColor;
+            subHead.appendChild(dot);
+            subHead.appendChild(el("span", "last-week-split-name", g.splitName));
+            box.appendChild(subHead);
+          }
+          const setsRow = el("div", "last-week-box-sets-row");
+          g.sets.forEach((st) => {
+            const text = `${st.weight}kg × ${st.reps}` + (st.rpe ? ` @${st.rpe}` : "") + (st.warmup ? " (w)" : "");
+            setsRow.appendChild(el("span", "last-week-box-set" + (st.warmup ? " warmup" : ""), text));
+          });
+          box.appendChild(setsRow);
+          if (g.note) box.appendChild(el("div", "last-week-box-note", g.note));
         });
-        if (prev.data.note) box.appendChild(el("div", "last-week-box-note", prev.data.note));
         body.appendChild(box);
       }
 
@@ -1372,15 +1402,11 @@
           items.push({
             date: entry.date,
             splitId: split.id,
-            splitName: split.name,
             weekKey: key,
             storageKey: exKey,
-            displayName: resolveDisplayName(split.id, exKey),
             muscleGroup: (ex && ex.muscleGroup) || "Untagged",
             volume: totalVol(workingSets(entry.sets)),
             setCount: workingSets(entry.sets).length,
-            best: bestSet(workingSets(entry.sets)),
-            color: split.color,
           });
         });
       });
@@ -1397,13 +1423,12 @@
     const wrap = el("div", "view-pad");
     const items = collectLogItems();
 
-    wrap.appendChild(buildStatsFolder("bodyweight", "Bodyweight", (body) => {
-      body.appendChild(buildBodyweightSection());
-    }));
-
     if (items.length === 0) {
-      wrap.appendChild(buildStatsFolder("training", "Training", (body) => {
+      wrap.appendChild(buildStatsFolder("training", "Training Stats", (body) => {
         body.appendChild(el("div", "empty-msg", "No sessions logged yet. Log a set on any split to start building your history."));
+      }));
+      wrap.appendChild(buildStatsFolder("bodyweight", "Bodyweight", (body) => {
+        body.appendChild(buildBodyweightSection());
       }));
       return wrap;
     }
@@ -1412,21 +1437,6 @@
     const totalVolAll = items.reduce((s, i) => s + i.volume, 0);
     const weekStartISO = currentWeekStartISO();
     const thisWeekDates = new Set(uniqueDates.filter((d) => d >= weekStartISO));
-
-    wrap.appendChild(buildStatsFolder("training", "Training", (body) => {
-      const statGrid = el("div", "stat-grid");
-      const box1 = el("div", "stat-box");
-      box1.appendChild(el("div", "stat-value", String(uniqueDates.length)));
-      box1.appendChild(el("div", "stat-label", "Sessions"));
-      const box2 = el("div", "stat-box");
-      box2.appendChild(el("div", "stat-value", totalVolAll >= 1000 ? `${(totalVolAll / 1000).toFixed(1)}k` : totalVolAll.toFixed(0)));
-      box2.appendChild(el("div", "stat-label", "Total Vol (kg)"));
-      const box3 = el("div", "stat-box");
-      box3.appendChild(el("div", "stat-value", String(thisWeekDates.size)));
-      box3.appendChild(el("div", "stat-label", "This Week"));
-      statGrid.appendChild(box1); statGrid.appendChild(box2); statGrid.appendChild(box3);
-      body.appendChild(statGrid);
-    }));
 
     if (statsWeekView === null) statsWeekView = state.activeWeek;
     const weekToShow = statsWeekView;
@@ -1447,18 +1457,31 @@
       wbox2.appendChild(el("div", "stat-label", `Training ${trainingWeekKey} (kg)`));
       weekVolGrid.appendChild(wbox1); weekVolGrid.appendChild(wbox2);
       body.appendChild(weekVolGrid);
-    }));
 
-    wrap.appendChild(buildStatsFolder("adherence", "Adherence", (body) => {
-      body.appendChild(buildHeatmap(items));
-    }));
-
-    wrap.appendChild(buildStatsFolder("musclegroups", `Muscle Groups · ${trainingWeekKey}`, (body) => {
+      body.appendChild(el("div", "editor-label-small", `MUSCLE GROUPS · ${trainingWeekKey}`));
       body.appendChild(buildMuscleGroupSection(items, trainingWeekKey));
     }));
 
-    wrap.appendChild(buildStatsFolder("recent", "Recent Activity", (body) => {
-      body.appendChild(buildRecentActivity(items));
+    wrap.appendChild(buildStatsFolder("training", "Training Stats", (body) => {
+      const statGrid = el("div", "stat-grid");
+      const box1 = el("div", "stat-box");
+      box1.appendChild(el("div", "stat-value", String(uniqueDates.length)));
+      box1.appendChild(el("div", "stat-label", "Sessions"));
+      const box2 = el("div", "stat-box");
+      box2.appendChild(el("div", "stat-value", totalVolAll >= 1000 ? `${(totalVolAll / 1000).toFixed(1)}k` : totalVolAll.toFixed(0)));
+      box2.appendChild(el("div", "stat-label", "Total Vol (kg)"));
+      const box3 = el("div", "stat-box");
+      box3.appendChild(el("div", "stat-value", String(thisWeekDates.size)));
+      box3.appendChild(el("div", "stat-label", "This Week"));
+      statGrid.appendChild(box1); statGrid.appendChild(box2); statGrid.appendChild(box3);
+      body.appendChild(statGrid);
+
+      body.appendChild(el("div", "editor-label-small", "ADHERENCE"));
+      body.appendChild(buildHeatmap(items));
+    }));
+
+    wrap.appendChild(buildStatsFolder("bodyweight", "Bodyweight", (body) => {
+      body.appendChild(buildBodyweightSection());
     }));
 
     return wrap;
@@ -1701,28 +1724,6 @@
     return wrap;
   }
 
-  function buildRecentActivity(items) {
-    const wrap = el("div");
-    const sorted = [...items].sort((a, b) => {
-      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-      return weekNum(b.weekKey) - weekNum(a.weekKey);
-    }).slice(0, 20);
-
-    sorted.forEach((i) => {
-      const row = el("div", "activity-item");
-      const dot = el("div", "activity-dot");
-      dot.style.background = i.color;
-      row.appendChild(dot);
-      const main = el("div", "activity-main");
-      main.appendChild(el("div", "activity-name", i.displayName));
-      const topSet = i.best ? `${i.best.weight}kg × ${i.best.reps}` : "";
-      main.appendChild(el("div", "activity-sub", `${i.splitName} · ${i.weekKey} · ${topSet} · ${i.setCount} sets`));
-      row.appendChild(main);
-      row.appendChild(el("div", "activity-date", formatDateShort(i.date)));
-      wrap.appendChild(row);
-    });
-    return wrap;
-  }
 
   // ---------- Backup / restore ----------
 

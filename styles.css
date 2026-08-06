@@ -267,9 +267,23 @@ button, input, textarea { font-family: inherit; }
 .exercise-meta .intensity { color: var(--text-dimmer); font-size: 12px; }
 .exercise-meta .cue { color: var(--text-faint); font-size: 12px; font-style: italic; }
 .exercise-last-week {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   margin-top: 5px;
   color: var(--text-faint);
   font-size: 12px;
+}
+.last-week-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.last-week-split-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
 }
 .exercise-summary {
   text-align: right;
@@ -313,6 +327,19 @@ button, input, textarea { font-family: inherit; }
   font-size: 11px;
   margin-bottom: 3px;
 }
+.last-week-split-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+.last-week-box-title + .last-week-split-head { margin-top: 0; }
+.last-week-split-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ddd;
+}
+.last-week-box-sets-row { margin-bottom: 2px; }
 .last-week-box-set {
   color: #bbb;
   font-size: 13px;
@@ -884,24 +911,6 @@ button, input, textarea { font-family: inherit; }
 .heatmap-cell[data-level="1"] { background: #7c3d0f; }
 .heatmap-cell[data-level="2"] { background: #c2540f; }
 .heatmap-cell[data-level="3"] { background: var(--accent); }
-
-.activity-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--surface-2);
-}
-.activity-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.activity-main { flex: 1; min-width: 0; }
-.activity-name { font-size: 13px; color: #ddd; font-weight: 600; }
-.activity-sub { font-size: 11px; color: var(--text-faint); }
-.activity-date { font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
 
 .empty-msg {
   color: var(--text-faint);
