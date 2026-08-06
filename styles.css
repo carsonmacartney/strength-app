@@ -1169,13 +1169,23 @@ button, input, textarea { font-family: inherit; }
 .bw-wrap { margin-bottom: 20px; }
 .bw-date-row {
   display: flex;
-  gap: 8px;
   margin-bottom: 8px;
 }
-.bw-day-select, .bw-month-select, .bw-year-select {
-  flex: 1;
-  min-width: 0;
+.bw-date-btn {
+  background: var(--input-bg);
+  border: 1px solid var(--border-strong);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
   text-align: center;
+}
+.bw-date-input-hidden {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
 }
 .bw-form-row {
   display: flex;
@@ -1227,6 +1237,7 @@ button, input, textarea { font-family: inherit; }
 
 /* Tin Shifters leaderboard */
 .ts-wrap { margin-bottom: 4px; }
+.ts-form-field { display: block; width: 100%; margin-bottom: 10px; }
 .ts-leaderboard-list { margin-bottom: 16px; }
 .ts-leaderboard-row {
   display: flex;

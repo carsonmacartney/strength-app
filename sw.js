@@ -1,4 +1,4 @@
-const CACHE_NAME = "shftrs-v14";
+const CACHE_NAME = "shftrs-v15";
 const ASSETS = [
   "./",
   "./index.html",
@@ -27,6 +27,9 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  // Only manage this app's own files. Cross-origin calls (e.g. Supabase) must always
+  // hit the network - caching them here made the Tin Shifters board show stale data.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

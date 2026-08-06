@@ -36,6 +36,7 @@
         { key: "reps", label: "Reps", type: "number", step: "1" },
       ],
       sortValue: (v) => parseFloat(v.weight) || 0,
+      groupField: "reps",
       formatEntry: (v) => `${v.weight}kg × ${v.reps}`,
     },
     {
@@ -1491,33 +1492,28 @@
     const formCard = el("div", "settings-card");
     formCard.style.marginBottom = "14px";
 
-    const today = parseISO(todayISO());
     const dateRow = el("div", "bw-date-row");
-    const daySelect = el("select", "editor-field bw-day-select");
-    for (let d = 1; d <= 31; d++) {
-      const opt = el("option", null, String(d));
-      opt.value = String(d);
-      if (d === today.getDate()) opt.selected = true;
-      daySelect.appendChild(opt);
-    }
-    const monthSelect = el("select", "editor-field bw-month-select");
-    MONTH_SHORT_NAMES.forEach((name, i) => {
-      const opt = el("option", null, name);
-      opt.value = String(i + 1);
-      if (i === today.getMonth()) opt.selected = true;
-      monthSelect.appendChild(opt);
+    // A hidden native date input drives the actual calendar picker (tap to open),
+    // but we never show its own text - the browser renders that in the OS locale,
+    // which is what broke dd/mm/yy before. Our own button shows the formatted date.
+    const dateInput = document.createElement("input");
+    dateInput.type = "date";
+    dateInput.className = "bw-date-input-hidden";
+    dateInput.value = todayISO();
+    const dateBtn = el("button", "bw-date-btn", formatDateNumeric(dateInput.value));
+    dateBtn.type = "button";
+    dateBtn.addEventListener("click", () => {
+      if (typeof dateInput.showPicker === "function") {
+        try { dateInput.showPicker(); return; } catch {}
+      }
+      dateInput.focus();
+      dateInput.click();
     });
-    const yearSelect = el("select", "editor-field bw-year-select");
-    const thisYear = today.getFullYear();
-    for (let y = thisYear - 3; y <= thisYear; y++) {
-      const opt = el("option", null, String(y));
-      opt.value = String(y);
-      if (y === thisYear) opt.selected = true;
-      yearSelect.appendChild(opt);
-    }
-    dateRow.appendChild(daySelect);
-    dateRow.appendChild(monthSelect);
-    dateRow.appendChild(yearSelect);
+    dateInput.addEventListener("change", () => {
+      if (dateInput.value) dateBtn.textContent = formatDateNumeric(dateInput.value);
+    });
+    dateRow.appendChild(dateBtn);
+    dateRow.appendChild(dateInput);
     formCard.appendChild(dateRow);
 
     const formRow = el("div", "bw-form-row");
@@ -1529,9 +1525,7 @@
     const logBtn = el("button", "settings-btn bw-log-btn", "Log");
     logBtn.addEventListener("click", () => {
       const w = parseFloat(weightInput.value);
-      const dd = String(daySelect.value).padStart(2, "0");
-      const mm = String(monthSelect.value).padStart(2, "0");
-      const isoDate = `${yearSelect.value}-${mm}-${dd}`;
+      const isoDate = dateInput.value || todayISO();
       if (!w || w <= 0) { toast("Enter a weight"); return; }
       bodyweightEntries = bodyweightEntries.filter((e) => e.date !== isoDate);
       bodyweightEntries.push({ id: uid(), date: isoDate, weight: w });
@@ -1881,19 +1875,43 @@
       });
   }
 
+  // Ranks a exercise's entries for the leaderboard. Plain exercises: one row per
+  // person (their all-time best). Exercises with a groupField (e.g. Bench Press's
+  // "reps"): one row per person per group value, listed lowest group value first and
+  // heaviest-first within each group, so a 1-rep PR and a 3-rep PR both show.
+  function rankTinShiftersEntries(exCfg, entries) {
+    if (exCfg.groupField) {
+      const bestByKey = {};
+      entries.forEach((p) => {
+        const key = `${p.name}::${p.entry_values[exCfg.groupField]}`;
+        const existing = bestByKey[key];
+        if (!existing || exCfg.sortValue(p.entry_values) > exCfg.sortValue(existing.entry_values)) {
+          bestByKey[key] = p;
+        }
+      });
+      return Object.values(bestByKey).sort((a, b) => {
+        const ga = parseFloat(a.entry_values[exCfg.groupField]) || 0;
+        const gb = parseFloat(b.entry_values[exCfg.groupField]) || 0;
+        if (ga !== gb) return ga - gb;
+        return exCfg.sortValue(b.entry_values) - exCfg.sortValue(a.entry_values);
+      });
+    }
+    const bestByName = {};
+    entries.forEach((p) => {
+      const existing = bestByName[p.name];
+      if (!existing || exCfg.sortValue(p.entry_values) > exCfg.sortValue(existing.entry_values)) {
+        bestByName[p.name] = p;
+      }
+    });
+    return Object.values(bestByName).sort((a, b) => exCfg.sortValue(b.entry_values) - exCfg.sortValue(a.entry_values));
+  }
+
   function buildTinShiftersLeaderboard() {
     const wrap = el("div");
     TIN_SHIFTERS_EXERCISES.forEach((exCfg) => {
       wrap.appendChild(el("div", "editor-label-small", exCfg.name.toUpperCase()));
       const entries = tinShiftersPRs.filter((p) => p.exercise_id === exCfg.id);
-      const bestByName = {};
-      entries.forEach((p) => {
-        const existing = bestByName[p.name];
-        if (!existing || exCfg.sortValue(p.entry_values) > exCfg.sortValue(existing.entry_values)) {
-          bestByName[p.name] = p;
-        }
-      });
-      const ranked = Object.values(bestByName).sort((a, b) => exCfg.sortValue(b.entry_values) - exCfg.sortValue(a.entry_values));
+      const ranked = rankTinShiftersEntries(exCfg, entries);
 
       if (ranked.length === 0) {
         wrap.appendChild(el("div", "empty-msg", "No PRs logged yet."));
@@ -1918,7 +1936,7 @@
     const exCfg = TIN_SHIFTERS_EXERCISES.find((e) => e.id === tinShiftersSelectedExercise);
     const fieldInputs = {};
 
-    const exSelect = el("select", "editor-field");
+    const exSelect = el("select", "editor-field ts-form-field");
     const blankEx = el("option", null, "Choose exercise…");
     blankEx.value = "";
     exSelect.appendChild(blankEx);
@@ -1934,7 +1952,7 @@
     });
     wrap.appendChild(exSelect);
 
-    const nameSelect = el("select", "editor-field");
+    const nameSelect = el("select", "editor-field ts-form-field");
     const blankName = el("option", null, "Choose your name…");
     blankName.value = "";
     nameSelect.appendChild(blankName);
