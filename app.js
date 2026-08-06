@@ -1388,38 +1388,45 @@
     return items;
   }
 
+  const expandedStatsFolders = new Set();
+  function buildStatsFolder(id, title, buildContent) {
+    return buildFolder(expandedStatsFolders, id, title, buildContent);
+  }
+
   function buildStatsView() {
     const wrap = el("div", "view-pad");
     const items = collectLogItems();
 
-    wrap.appendChild(el("div", "section-label", "BODYWEIGHT"));
-    wrap.appendChild(buildBodyweightSection());
+    wrap.appendChild(buildStatsFolder("bodyweight", "Bodyweight", (body) => {
+      body.appendChild(buildBodyweightSection());
+    }));
 
     if (items.length === 0) {
-      wrap.appendChild(el("div", "section-label", "TRAINING"));
-      wrap.appendChild(el("div", "empty-msg", "No sessions logged yet. Log a set on any split to start building your history."));
+      wrap.appendChild(buildStatsFolder("training", "Training", (body) => {
+        body.appendChild(el("div", "empty-msg", "No sessions logged yet. Log a set on any split to start building your history."));
+      }));
       return wrap;
     }
-
-    wrap.appendChild(el("div", "section-label", "TRAINING"));
 
     const uniqueDates = [...new Set(items.map((i) => i.date))];
     const totalVolAll = items.reduce((s, i) => s + i.volume, 0);
     const weekStartISO = currentWeekStartISO();
     const thisWeekDates = new Set(uniqueDates.filter((d) => d >= weekStartISO));
 
-    const statGrid = el("div", "stat-grid");
-    const box1 = el("div", "stat-box");
-    box1.appendChild(el("div", "stat-value", String(uniqueDates.length)));
-    box1.appendChild(el("div", "stat-label", "Sessions"));
-    const box2 = el("div", "stat-box");
-    box2.appendChild(el("div", "stat-value", totalVolAll >= 1000 ? `${(totalVolAll / 1000).toFixed(1)}k` : totalVolAll.toFixed(0)));
-    box2.appendChild(el("div", "stat-label", "Total Vol (kg)"));
-    const box3 = el("div", "stat-box");
-    box3.appendChild(el("div", "stat-value", String(thisWeekDates.size)));
-    box3.appendChild(el("div", "stat-label", "This Week"));
-    statGrid.appendChild(box1); statGrid.appendChild(box2); statGrid.appendChild(box3);
-    wrap.appendChild(statGrid);
+    wrap.appendChild(buildStatsFolder("training", "Training", (body) => {
+      const statGrid = el("div", "stat-grid");
+      const box1 = el("div", "stat-box");
+      box1.appendChild(el("div", "stat-value", String(uniqueDates.length)));
+      box1.appendChild(el("div", "stat-label", "Sessions"));
+      const box2 = el("div", "stat-box");
+      box2.appendChild(el("div", "stat-value", totalVolAll >= 1000 ? `${(totalVolAll / 1000).toFixed(1)}k` : totalVolAll.toFixed(0)));
+      box2.appendChild(el("div", "stat-label", "Total Vol (kg)"));
+      const box3 = el("div", "stat-box");
+      box3.appendChild(el("div", "stat-value", String(thisWeekDates.size)));
+      box3.appendChild(el("div", "stat-label", "This Week"));
+      statGrid.appendChild(box1); statGrid.appendChild(box2); statGrid.appendChild(box3);
+      body.appendChild(statGrid);
+    }));
 
     if (statsWeekView === null) statsWeekView = state.activeWeek;
     const weekToShow = statsWeekView;
@@ -1427,30 +1434,32 @@
     const calendarWeekVol = items.filter((i) => i.date >= weekStartISO).reduce((s, i) => s + i.volume, 0);
     const trainingWeekVol = items.filter((i) => i.weekKey === trainingWeekKey).reduce((s, i) => s + i.volume, 0);
 
-    const weekHeadRow = el("div", "stats-week-head-row");
-    weekHeadRow.appendChild(el("div", "section-label", "WEEKLY VOLUME"));
-    weekHeadRow.appendChild(buildStatsWeekToggle(weekToShow));
-    wrap.appendChild(weekHeadRow);
+    wrap.appendChild(buildStatsFolder("weeklyvolume", "Weekly Volume", (body) => {
+      body.appendChild(buildStatsWeekToggle(weekToShow));
 
-    const weekVolGrid = el("div", "stat-grid");
-    weekVolGrid.style.gridTemplateColumns = "repeat(2, 1fr)";
-    const wbox1 = el("div", "stat-box");
-    wbox1.appendChild(el("div", "stat-value", calendarWeekVol >= 1000 ? `${(calendarWeekVol / 1000).toFixed(1)}k` : calendarWeekVol.toFixed(0)));
-    wbox1.appendChild(el("div", "stat-label", "Calendar Wk (kg)"));
-    const wbox2 = el("div", "stat-box");
-    wbox2.appendChild(el("div", "stat-value", trainingWeekVol >= 1000 ? `${(trainingWeekVol / 1000).toFixed(1)}k` : trainingWeekVol.toFixed(0)));
-    wbox2.appendChild(el("div", "stat-label", `Training ${trainingWeekKey} (kg)`));
-    weekVolGrid.appendChild(wbox1); weekVolGrid.appendChild(wbox2);
-    wrap.appendChild(weekVolGrid);
+      const weekVolGrid = el("div", "stat-grid");
+      weekVolGrid.style.gridTemplateColumns = "repeat(2, 1fr)";
+      const wbox1 = el("div", "stat-box");
+      wbox1.appendChild(el("div", "stat-value", calendarWeekVol >= 1000 ? `${(calendarWeekVol / 1000).toFixed(1)}k` : calendarWeekVol.toFixed(0)));
+      wbox1.appendChild(el("div", "stat-label", "Calendar Wk (kg)"));
+      const wbox2 = el("div", "stat-box");
+      wbox2.appendChild(el("div", "stat-value", trainingWeekVol >= 1000 ? `${(trainingWeekVol / 1000).toFixed(1)}k` : trainingWeekVol.toFixed(0)));
+      wbox2.appendChild(el("div", "stat-label", `Training ${trainingWeekKey} (kg)`));
+      weekVolGrid.appendChild(wbox1); weekVolGrid.appendChild(wbox2);
+      body.appendChild(weekVolGrid);
+    }));
 
-    wrap.appendChild(el("div", "section-label", "ADHERENCE"));
-    wrap.appendChild(buildHeatmap(items));
+    wrap.appendChild(buildStatsFolder("adherence", "Adherence", (body) => {
+      body.appendChild(buildHeatmap(items));
+    }));
 
-    wrap.appendChild(el("div", "section-label", `MUSCLE GROUPS · ${trainingWeekKey}`));
-    wrap.appendChild(buildMuscleGroupSection(items, trainingWeekKey));
+    wrap.appendChild(buildStatsFolder("musclegroups", `Muscle Groups · ${trainingWeekKey}`, (body) => {
+      body.appendChild(buildMuscleGroupSection(items, trainingWeekKey));
+    }));
 
-    wrap.appendChild(el("div", "section-label", "RECENT ACTIVITY"));
-    wrap.appendChild(buildRecentActivity(items));
+    wrap.appendChild(buildStatsFolder("recent", "Recent Activity", (body) => {
+      body.appendChild(buildRecentActivity(items));
+    }));
 
     return wrap;
   }
@@ -1492,7 +1501,8 @@
     const formCard = el("div", "settings-card");
     formCard.style.marginBottom = "14px";
 
-    const dateRow = el("div", "bw-date-row");
+    const formRow = el("div", "bw-form-row");
+
     // A hidden native date input drives the actual calendar picker (tap to open),
     // but we never show its own text - the browser renders that in the OS locale,
     // which is what broke dd/mm/yy before. Our own button shows the formatted date.
@@ -1512,11 +1522,9 @@
     dateInput.addEventListener("change", () => {
       if (dateInput.value) dateBtn.textContent = formatDateNumeric(dateInput.value);
     });
-    dateRow.appendChild(dateBtn);
-    dateRow.appendChild(dateInput);
-    formCard.appendChild(dateRow);
+    formRow.appendChild(dateBtn);
+    formRow.appendChild(dateInput);
 
-    const formRow = el("div", "bw-form-row");
     const weightInput = el("input", "editor-field bw-weight-input");
     weightInput.type = "number";
     weightInput.step = "0.1";
@@ -2073,17 +2081,15 @@
 
   // ---------- Settings view ----------
 
-  const expandedSettingsFolders = new Set();
-
-  function buildSettingsFolder(id, title, buildContent) {
+  function buildFolder(expandedSet, id, title, buildContent) {
     const folder = el("div", "settings-folder");
-    const expanded = expandedSettingsFolders.has(id);
+    const expanded = expandedSet.has(id);
 
     const header = el("div", "settings-folder-header");
     header.appendChild(el("span", "settings-folder-title", title));
     header.appendChild(el("span", "settings-folder-chevron" + (expanded ? " open" : ""), expanded ? "▲" : "▼"));
     header.addEventListener("click", () => {
-      if (expanded) expandedSettingsFolders.delete(id); else expandedSettingsFolders.add(id);
+      if (expanded) expandedSet.delete(id); else expandedSet.add(id);
       renderMainView();
     });
     folder.appendChild(header);
@@ -2095,6 +2101,11 @@
     }
 
     return folder;
+  }
+
+  const expandedSettingsFolders = new Set();
+  function buildSettingsFolder(id, title, buildContent) {
+    return buildFolder(expandedSettingsFolders, id, title, buildContent);
   }
 
   function buildSettingsView() {
