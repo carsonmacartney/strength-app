@@ -1,4 +1,4 @@
-const CACHE_NAME = "shftrs-v13";
+const CACHE_NAME = "shftrs-v14";
 const ASSETS = [
   "./",
   "./index.html",

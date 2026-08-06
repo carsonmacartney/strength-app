@@ -13,6 +13,42 @@
   const MUSCLE_GROUPS = ["Chest", "Back", "Lats", "Shoulders", "Biceps", "Triceps", "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
   const COLOR_PALETTE = ["#E53935", "#1E88E5", "#43A047", "#8E24AA", "#F9A825", "#00ACC1", "#D81B60", "#6D4C41", "#5E35B1", "#00897B"];
 
+  // Tin Shifters: shared PR board for the lift club, backed by Supabase. Anon key only -
+  // RLS on the tin_shifters_prs table restricts inserts to the roster below and allows
+  // no update/delete, so every submission is a permanent new row (honesty system, no login).
+  const SUPABASE_URL = "https://rpskhrnbjsfeynnpsbdw.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJwc2tocm5ianNmZXlubnBzYmR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5NTYxMDgsImV4cCI6MjEwMTUzMjEwOH0.M9mdOB8eLcrkrBVXD0dkE0kjdi_wLsYzyU3n1tysbs8";
+
+  const TIN_SHIFTERS_ROSTER = [
+    "Carse", "Matt G", "Will G", "Brett", "Milts", "Adam", "Marek", "Marc",
+    "Grub", "Dan", "Gravy", "Jacko", "Tommy B", "Dando", "Sam D",
+  ];
+
+  // Exercise definitions are code-only (not user-editable in-app) - update this list
+  // here to add/change what the club tracks. Each field the submitter fills in is
+  // fixed; there's no way for them to add custom fields.
+  const TIN_SHIFTERS_EXERCISES = [
+    {
+      id: "bench_press",
+      name: "Bench Press",
+      fields: [
+        { key: "weight", label: "Weight (kg)", type: "number", step: "0.5" },
+        { key: "reps", label: "Reps", type: "number", step: "1" },
+      ],
+      sortValue: (v) => parseFloat(v.weight) || 0,
+      formatEntry: (v) => `${v.weight}kg × ${v.reps}`,
+    },
+    {
+      id: "max_chin_ups",
+      name: "Max Chin Ups",
+      fields: [
+        { key: "reps", label: "Reps", type: "number", step: "1" },
+      ],
+      sortValue: (v) => parseFloat(v.reps) || 0,
+      formatEntry: (v) => `${v.reps} reps`,
+    },
+  ];
+
   // Ported from the original hardcoded program. IDs match the original split/exercise
   // names so any history already logged under them keeps working. Everything here is
   // now editable in-app via Settings -> Modify Splits.
@@ -1797,6 +1833,226 @@
     return summary;
   }
 
+  // ---------- Tin Shifters (Supabase-backed shared PR board) ----------
+
+  async function fetchTinShiftersPRs() {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tin_shifters_prs?select=*`, {
+      cache: "no-store",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+    });
+    if (!res.ok) throw new Error("Failed to load PRs");
+    return res.json();
+  }
+
+  async function submitTinShiftersPR(entry) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tin_shifters_prs`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) throw new Error("Failed to submit PR");
+  }
+
+  let tinShiftersPRs = null;
+  let tinShiftersLoadError = false;
+  let tinShiftersView = "leaderboard";
+  let tinShiftersSelectedExercise = null;
+  let tinShiftersSelectedName = null;
+  let tinShiftersSubmitting = false;
+
+  function loadTinShiftersPRs() {
+    fetchTinShiftersPRs()
+      .then((rows) => {
+        tinShiftersPRs = rows;
+        tinShiftersLoadError = false;
+        if (state.activeDay === "Settings" && expandedSettingsFolders.has("tinshifters")) renderMainView();
+      })
+      .catch(() => {
+        tinShiftersLoadError = true;
+        if (state.activeDay === "Settings" && expandedSettingsFolders.has("tinshifters")) renderMainView();
+      });
+  }
+
+  function buildTinShiftersLeaderboard() {
+    const wrap = el("div");
+    TIN_SHIFTERS_EXERCISES.forEach((exCfg) => {
+      wrap.appendChild(el("div", "editor-label-small", exCfg.name.toUpperCase()));
+      const entries = tinShiftersPRs.filter((p) => p.exercise_id === exCfg.id);
+      const bestByName = {};
+      entries.forEach((p) => {
+        const existing = bestByName[p.name];
+        if (!existing || exCfg.sortValue(p.entry_values) > exCfg.sortValue(existing.entry_values)) {
+          bestByName[p.name] = p;
+        }
+      });
+      const ranked = Object.values(bestByName).sort((a, b) => exCfg.sortValue(b.entry_values) - exCfg.sortValue(a.entry_values));
+
+      if (ranked.length === 0) {
+        wrap.appendChild(el("div", "empty-msg", "No PRs logged yet."));
+        return;
+      }
+      const list = el("div", "ts-leaderboard-list");
+      ranked.forEach((p, i) => {
+        const row = el("div", "ts-leaderboard-row");
+        row.appendChild(el("span", "ts-leaderboard-rank", `${i + 1}`));
+        row.appendChild(el("span", "ts-leaderboard-name", p.name));
+        row.appendChild(el("span", "ts-leaderboard-value", exCfg.formatEntry(p.entry_values)));
+        row.appendChild(el("span", "ts-leaderboard-date", formatDateShort(p.date)));
+        list.appendChild(row);
+      });
+      wrap.appendChild(list);
+    });
+    return wrap;
+  }
+
+  function buildTinShiftersAddForm() {
+    const wrap = el("div");
+    const exCfg = TIN_SHIFTERS_EXERCISES.find((e) => e.id === tinShiftersSelectedExercise);
+    const fieldInputs = {};
+
+    const exSelect = el("select", "editor-field");
+    const blankEx = el("option", null, "Choose exercise…");
+    blankEx.value = "";
+    exSelect.appendChild(blankEx);
+    TIN_SHIFTERS_EXERCISES.forEach((cfg) => {
+      const opt = el("option", null, cfg.name);
+      opt.value = cfg.id;
+      if (tinShiftersSelectedExercise === cfg.id) opt.selected = true;
+      exSelect.appendChild(opt);
+    });
+    exSelect.addEventListener("change", () => {
+      tinShiftersSelectedExercise = exSelect.value || null;
+      renderMainView();
+    });
+    wrap.appendChild(exSelect);
+
+    const nameSelect = el("select", "editor-field");
+    const blankName = el("option", null, "Choose your name…");
+    blankName.value = "";
+    nameSelect.appendChild(blankName);
+    TIN_SHIFTERS_ROSTER.forEach((n) => {
+      const opt = el("option", null, n);
+      opt.value = n;
+      if (tinShiftersSelectedName === n) opt.selected = true;
+      nameSelect.appendChild(opt);
+    });
+    nameSelect.addEventListener("change", () => { tinShiftersSelectedName = nameSelect.value || null; });
+    wrap.appendChild(nameSelect);
+
+    if (exCfg) {
+      const fieldsGrid = el("div", "editor-field-grid");
+      exCfg.fields.forEach((f) => {
+        const input = el("input", "editor-field");
+        input.type = f.type || "number";
+        if (f.step) input.step = f.step;
+        input.placeholder = f.label;
+        fieldInputs[f.key] = input;
+        fieldsGrid.appendChild(input);
+      });
+      wrap.appendChild(fieldsGrid);
+    }
+
+    const btnRow = el("div", "quickadd-btn-row");
+    const cancelBtn = el("button", "template-btn", "Cancel");
+    cancelBtn.addEventListener("click", () => {
+      tinShiftersView = "leaderboard";
+      tinShiftersSelectedExercise = null;
+      tinShiftersSelectedName = null;
+      renderMainView();
+    });
+    btnRow.appendChild(cancelBtn);
+
+    const submitBtn = el("button", "template-btn", tinShiftersSubmitting ? "Submitting…" : "Submit");
+    submitBtn.disabled = tinShiftersSubmitting;
+    submitBtn.addEventListener("click", () => {
+      if (!exCfg) { toast("Choose an exercise"); return; }
+      if (!tinShiftersSelectedName) { toast("Choose your name"); return; }
+      const values = {};
+      let valid = true;
+      exCfg.fields.forEach((f) => {
+        const raw = fieldInputs[f.key].value;
+        if (raw === "") valid = false;
+        values[f.key] = parseFloat(raw);
+      });
+      if (!valid) { toast("Fill in all fields"); return; }
+
+      tinShiftersSubmitting = true;
+      renderMainView();
+      submitTinShiftersPR({
+        exercise_id: exCfg.id,
+        name: tinShiftersSelectedName,
+        entry_values: values,
+        date: todayISO(),
+      })
+        .then(() => {
+          tinShiftersSubmitting = false;
+          tinShiftersView = "leaderboard";
+          tinShiftersSelectedExercise = null;
+          tinShiftersSelectedName = null;
+          tinShiftersPRs = null;
+          toast("PR logged!");
+          renderMainView();
+          loadTinShiftersPRs();
+        })
+        .catch(() => {
+          tinShiftersSubmitting = false;
+          toast("Couldn't submit — try again");
+          renderMainView();
+        });
+    });
+    btnRow.appendChild(submitBtn);
+    wrap.appendChild(btnRow);
+
+    return wrap;
+  }
+
+  function buildTinShiftersSection() {
+    const wrap = el("div", "ts-wrap");
+
+    if (tinShiftersPRs === null && !tinShiftersLoadError) {
+      wrap.appendChild(el("div", "empty-msg", "Loading…"));
+      loadTinShiftersPRs();
+      return wrap;
+    }
+
+    if (tinShiftersLoadError) {
+      wrap.appendChild(el("div", "empty-msg", "Couldn't load Tin Shifters data. Check your connection."));
+      const retryBtn = el("button", "settings-btn", "Retry");
+      retryBtn.addEventListener("click", () => {
+        tinShiftersPRs = null;
+        tinShiftersLoadError = false;
+        renderMainView();
+      });
+      wrap.appendChild(retryBtn);
+      return wrap;
+    }
+
+    if (tinShiftersView === "add") {
+      wrap.appendChild(buildTinShiftersAddForm());
+      return wrap;
+    }
+
+    wrap.appendChild(buildTinShiftersLeaderboard());
+    const addBtn = el("button", "settings-btn", "+ Add a PR");
+    addBtn.addEventListener("click", () => {
+      tinShiftersView = "add";
+      tinShiftersSelectedExercise = null;
+      tinShiftersSelectedName = null;
+      renderMainView();
+    });
+    wrap.appendChild(addBtn);
+
+    return wrap;
+  }
+
   // ---------- Settings view ----------
 
   const expandedSettingsFolders = new Set();
@@ -1883,6 +2139,10 @@
       importLabel.appendChild(importInput);
       importCard.appendChild(importLabel);
       body.appendChild(importCard);
+    }));
+
+    wrap.appendChild(buildSettingsFolder("tinshifters", "Tin Shifters", (body) => {
+      body.appendChild(buildTinShiftersSection());
     }));
 
     const logoWrap = el("div", "settings-logo-wrap");
