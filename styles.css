@@ -1167,13 +1167,19 @@ button, input, textarea { font-family: inherit; }
 
 /* Bodyweight */
 .bw-wrap { margin-bottom: 20px; }
+.bw-date-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.bw-day-select, .bw-month-select, .bw-year-select {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
 .bw-form-row {
   display: flex;
   gap: 8px;
-}
-.bw-date-input {
-  flex: 1;
-  min-width: 0;
 }
 .bw-weight-input {
   width: 80px;

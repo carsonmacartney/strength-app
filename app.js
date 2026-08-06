@@ -1454,11 +1454,37 @@
 
     const formCard = el("div", "settings-card");
     formCard.style.marginBottom = "14px";
+
+    const today = parseISO(todayISO());
+    const dateRow = el("div", "bw-date-row");
+    const daySelect = el("select", "editor-field bw-day-select");
+    for (let d = 1; d <= 31; d++) {
+      const opt = el("option", null, String(d));
+      opt.value = String(d);
+      if (d === today.getDate()) opt.selected = true;
+      daySelect.appendChild(opt);
+    }
+    const monthSelect = el("select", "editor-field bw-month-select");
+    MONTH_SHORT_NAMES.forEach((name, i) => {
+      const opt = el("option", null, name);
+      opt.value = String(i + 1);
+      if (i === today.getMonth()) opt.selected = true;
+      monthSelect.appendChild(opt);
+    });
+    const yearSelect = el("select", "editor-field bw-year-select");
+    const thisYear = today.getFullYear();
+    for (let y = thisYear - 3; y <= thisYear; y++) {
+      const opt = el("option", null, String(y));
+      opt.value = String(y);
+      if (y === thisYear) opt.selected = true;
+      yearSelect.appendChild(opt);
+    }
+    dateRow.appendChild(daySelect);
+    dateRow.appendChild(monthSelect);
+    dateRow.appendChild(yearSelect);
+    formCard.appendChild(dateRow);
+
     const formRow = el("div", "bw-form-row");
-    const dateInput = el("input", "editor-field bw-date-input");
-    dateInput.type = "date";
-    dateInput.value = todayISO();
-    formRow.appendChild(dateInput);
     const weightInput = el("input", "editor-field bw-weight-input");
     weightInput.type = "number";
     weightInput.step = "0.1";
@@ -1467,9 +1493,12 @@
     const logBtn = el("button", "settings-btn bw-log-btn", "Log");
     logBtn.addEventListener("click", () => {
       const w = parseFloat(weightInput.value);
-      if (!dateInput.value || !w || w <= 0) { toast("Enter a date and weight"); return; }
-      bodyweightEntries = bodyweightEntries.filter((e) => e.date !== dateInput.value);
-      bodyweightEntries.push({ id: uid(), date: dateInput.value, weight: w });
+      const dd = String(daySelect.value).padStart(2, "0");
+      const mm = String(monthSelect.value).padStart(2, "0");
+      const isoDate = `${yearSelect.value}-${mm}-${dd}`;
+      if (!w || w <= 0) { toast("Enter a weight"); return; }
+      bodyweightEntries = bodyweightEntries.filter((e) => e.date !== isoDate);
+      bodyweightEntries.push({ id: uid(), date: isoDate, weight: w });
       bodyweightEntries.sort((a, b) => (a.date < b.date ? 1 : -1));
       saveBodyweight();
       renderMainView();
