@@ -353,7 +353,7 @@
   mergeLibraryExercises("Machine Preacher (Pull)", "Machine Preacher (Upper)");
   mergeLibraryExercises("Lateral Raise", "Lateral Raise (Upper)");
   function accentFor(splitId) { const s = findSplit(splitId); return s ? s.color : "#888"; }
-  function allTabs() { return [...program.splits.map((s) => s.id), "Stats", "Settings"]; }
+  function allTabs() { return [...program.splits.map((s) => s.id), "Stats", "TinShifters", "Settings"]; }
 
   function weekLabel(n) { return `Week ${n}`; }
   function weekNum(key) { return parseInt(key.replace("Week ", ""), 10); }
@@ -444,7 +444,7 @@
 
   const savedUiState = loadUiState();
   const restoredDayValid = savedUiState.activeDay &&
-    (savedUiState.activeDay === "Stats" || savedUiState.activeDay === "Settings" || findSplit(savedUiState.activeDay));
+    (savedUiState.activeDay === "Stats" || savedUiState.activeDay === "TinShifters" || savedUiState.activeDay === "Settings" || findSplit(savedUiState.activeDay));
 
   const state = {
     activeDay: restoredDayValid ? savedUiState.activeDay : (program.splits[0] ? program.splits[0].id : "Settings"),
@@ -472,10 +472,10 @@
   function renderTabBar() {
     tabbarEl.innerHTML = "";
     allTabs().forEach((dk) => {
-      const isSpecial = dk === "Settings" || dk === "Stats";
+      const isSpecial = dk === "Settings" || dk === "Stats" || dk === "TinShifters";
       const split = isSpecial ? null : findSplit(dk);
       const color = isSpecial ? "#888" : (split ? split.color : "#888");
-      const label = dk === "Settings" ? "⚙" : (dk === "Stats" ? "Stats" : (split ? split.name : dk));
+      const label = dk === "Settings" ? "⚙" : (dk === "Stats" ? "Stats" : (dk === "TinShifters" ? "SHFTRS" : (split ? split.name : dk)));
       const isActive = state.activeDay === dk;
       const btn = el("button", "tab-pill" + (isActive ? " active" : ""), label);
       btn.style.color = isActive ? color : "";
@@ -623,6 +623,8 @@
       viewContainerEl.appendChild(buildSettingsView());
     } else if (state.activeDay === "Stats") {
       viewContainerEl.appendChild(buildStatsView());
+    } else if (state.activeDay === "TinShifters") {
+      viewContainerEl.appendChild(buildTinShiftersTabView());
     } else if (findSplit(state.activeDay)) {
       viewContainerEl.appendChild(buildSplitView(state.activeDay));
     } else {
@@ -1876,11 +1878,11 @@
       .then((rows) => {
         tinShiftersPRs = rows;
         tinShiftersLoadError = false;
-        if (state.activeDay === "Settings" && expandedSettingsFolders.has("tinshifters")) renderMainView();
+        if (state.activeDay === "TinShifters" && expandedTinShiftersFolders.has("toplifts")) renderMainView();
       })
       .catch(() => {
         tinShiftersLoadError = true;
-        if (state.activeDay === "Settings" && expandedSettingsFolders.has("tinshifters")) renderMainView();
+        if (state.activeDay === "TinShifters" && expandedTinShiftersFolders.has("toplifts")) renderMainView();
       });
   }
 
@@ -2080,6 +2082,39 @@
     return wrap;
   }
 
+  function buildMotivationVideo() {
+    const wrap = el("div", "motivation-video-wrap");
+    const iframe = document.createElement("iframe");
+    iframe.src = "https://www.youtube.com/embed/CDpTc32sV1Y?autoplay=1&playsinline=1";
+    iframe.title = "Motivation video";
+    iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+    iframe.allowFullscreen = true;
+    iframe.frameBorder = "0";
+    wrap.appendChild(iframe);
+    return wrap;
+  }
+
+  const expandedTinShiftersFolders = new Set();
+  function buildTinShiftersFolder(id, title, buildContent) {
+    return buildFolder(expandedTinShiftersFolders, id, title, buildContent);
+  }
+
+  function buildTinShiftersTabView() {
+    const wrap = el("div", "view-pad");
+
+    wrap.appendChild(buildTinShiftersFolder("toplifts", "Top Lifts", (body) => {
+      body.appendChild(buildTinShiftersSection());
+    }));
+
+    wrap.appendChild(buildTinShiftersFolder("tinshifters", "Tin Shifters", () => {}));
+
+    wrap.appendChild(buildTinShiftersFolder("motivation", "Motivation", (body) => {
+      body.appendChild(buildMotivationVideo());
+    }));
+
+    return wrap;
+  }
+
   // ---------- Settings view ----------
 
   function buildFolder(expandedSet, id, title, buildContent) {
@@ -2169,10 +2204,6 @@
       importLabel.appendChild(importInput);
       importCard.appendChild(importLabel);
       body.appendChild(importCard);
-    }));
-
-    wrap.appendChild(buildSettingsFolder("tinshifters", "Tin Shifters", (body) => {
-      body.appendChild(buildTinShiftersSection());
     }));
 
     const logoWrap = el("div", "settings-logo-wrap");
